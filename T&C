@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>ChronoBot – Terms of Service & Privacy Policy</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background-color: #0f172a;
+      color: #e5e7eb;
+      margin: 0;
+      padding: 0;
+    }
+    main {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 2.5rem 1.5rem 3rem;
+    }
+    h1, h2, h3 {
+      color: #f9fafb;
+    }
+    h1 {
+      font-size: 2rem;
+      margin-bottom: 0.5rem;
+    }
+    h2 {
+      font-size: 1.35rem;
+      margin-top: 2rem;
+      border-bottom: 1px solid #1f2937;
+      padding-bottom: 0.4rem;
+    }
+    h3 {
+      font-size: 1.05rem;
+      margin-top: 1.2rem;
+    }
+    p {
+      line-height: 1.6;
+      margin: 0.5rem 0;
+    }
+    ul {
+      margin: 0.4rem 0 0.8rem 1.2rem;
+    }
+    a {
+      color: #a5b4fc;
+    }
+    small {
+      color: #9ca3af;
+    }
+    .meta {
+      margin-bottom: 1.5rem;
+      font-size: 0.9rem;
+      color: #9ca3af;
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1>ChronoBot – Terms of Service</h1>
+  <div class="meta">
+    <p><strong>Last updated:</strong> [Nov 30, 2025]</p>
+  </div>
+
+  <p>
+    ChronoBot (“<strong>Chromie</strong>”, “<strong>the bot</strong>”, “<strong>we</strong>”, “<strong>us</strong>”) is a Discord bot
+    that provides countdowns and reminder messages for events in Discord servers.
+    By adding ChronoBot to your server or interacting with the bot in any way,
+    you (“<strong>you</strong>”, “<strong>users</strong>”, “<strong>server owners</strong>”) agree to these Terms of Service.
+  </p>
+
+  <p>
+    ChronoBot is an independent project and is <strong>not</strong> affiliated with, endorsed by,
+    or officially connected to Discord Inc.
+  </p>
+
+  <h2>1. Eligibility & Acceptable Use</h2>
+
+  <p>
+    To use ChronoBot, you must comply with:
+  </p>
+  <ul>
+    <li>Discord’s <a href="https://discord.com/terms" target="_blank" rel="noopener">Terms of Service</a> and <a href="https://discord.com/guidelines" target="_blank" rel="noopener">Community Guidelines</a>, and</li>
+    <li>All applicable laws and regulations in your jurisdiction.</li>
+  </ul>
+
+  <p>You may not use ChronoBot to:</p>
+  <ul>
+    <li>Harass, abuse, or spam other users.</li>
+    <li>Plan, promote, or coordinate illegal activities.</li>
+    <li>Collect or store sensitive personal information in event names or descriptions.</li>
+    <li>Attempt to disrupt, reverse-engineer, or abuse the bot or Discord’s API.</li>
+  </ul>
+
+  <h2>2. Service Description</h2>
+
+  <p>ChronoBot provides, among other features:</p>
+  <ul>
+    <li>Event countdowns and a pinned countdown message in a configured channel.</li>
+    <li>Reminder messages at selected milestones before your event (for example 100 days, 50 days, about 1 month, 14 days, 7 days, 2 days, the day before, and the day of the event).</li>
+    <li>Slash commands used to configure and manage events (such as setting an event channel, adding events, listing events, and removing events).</li>
+  </ul>
+
+  <p>
+    Features may change, be added, or be removed at any time. We reserve the right to temporarily or permanently
+    suspend the bot, a specific feature, or access for individual servers or users.
+  </p>
+
+  <h2>3. No Warranty</h2>
+
+  <p>
+    ChronoBot is provided on an “<strong>as is</strong>” and “<strong>as available</strong>” basis.
+    We do not guarantee that:
+  </p>
+  <ul>
+    <li>Countdowns or reminders will always be accurate, timely, or delivered.</li>
+    <li>The bot will be online 24/7 or free from errors, bugs, or interruptions.</li>
+    <li>All data stored by the bot will be retained or available indefinitely.</li>
+  </ul>
+
+  <p>
+    You use ChronoBot at your own risk. You should not rely on ChronoBot as your only reminder system
+    for critical, legal, medical, or financial deadlines.
+  </p>
+
+  <h2>4. Limitation of Liability</h2>
+
+  <p>
+    To the maximum extent permitted by law, we will not be liable for any indirect, incidental, special,
+    consequential, or punitive damages, or any loss of data, events, opportunities, or profits,
+    arising from your use of or inability to use ChronoBot.
+  </p>
+
+  <p>
+    If, despite the above, we are found liable for any claim related to ChronoBot, our total liability
+    will be limited to the amount (if any) you have paid directly to us for the use of ChronoBot in the
+    preceding three (3) months, or one U.S. dollar (USD $1.00), whichever is greater.
+  </p>
+
+  <h2>5. Termination</h2>
+
+  <p>
+    You may stop using ChronoBot at any time by removing the bot from your server.
+    We may remove the bot from your server, restrict features, or block access at our discretion,
+    including if we believe these Terms or Discord’s policies have been violated.
+  </p>
+
+  <h2>6. Changes to These Terms</h2>
+
+  <p>
+    We may update these Terms from time to time, for example to reflect changes to the bot or to legal requirements.
+    When we do, we will update the “Last updated” date at the top of this page.
+    Continued use of ChronoBot after changes are posted means you accept the revised Terms.
+  </p>
+
+  <h2>7. Contact</h2>
+
+  <p>
+    If you have questions about these Terms or ChronoBot, you can contact us at:
+    <br />
+    <strong>Email:</strong> <a href="mailto:[your-email@example.com]">[your-email@example.com]</a>
+  </p>
+
+
+  <h1>Privacy Policy</h1>
+
+  <p>
+    This Privacy Policy explains what information ChronoBot (“Chromie”) collects and how it is used.
+    By using ChronoBot, you agree to this Policy.
+  </p>
+
+  <h2>1. Information We Collect</h2>
+
+  <h3>a) Data from Discord</h3>
+  <p>Through the Discord API, ChronoBot may receive and store:</p>
+  <ul>
+    <li>Server (guild) IDs and names.</li>
+    <li>Channel IDs for the configured event channel.</li>
+    <li>Message IDs for the pinned countdown message.</li>
+    <li>Event data, such as event names and dates/times.</li>
+    <li>User IDs for users who link their account to a server for DM-based commands.</li>
+  </ul>
+
+  <p>
+    ChronoBot does <strong>not</strong> intentionally store general message content outside of commands
+    or data needed to operate countdown and reminder features.
+  </p>
+
+  <h3>b) Logs and Operational Data</h3>
+
+  <p>
+    The hosting platform may generate logs that include technical information such as timestamps, error messages,
+    and possibly user IDs or guild IDs when errors occur. These logs are used for debugging and maintenance.
+  </p>
+
+  <h2>2. How We Use Information</h2>
+
+  <p>We use collected information to:</p>
+  <ul>
+    <li>Provide and operate countdown and reminder features.</li>
+    <li>Maintain pinned countdown messages in your configured channel.</li>
+    <li>Send milestone reminders to your server at the appropriate times.</li>
+    <li>Allow some configuration to be done via DM for linked users.</li>
+    <li>Monitor and improve stability, performance, and security of the bot.</li>
+  </ul>
+
+  <h2>3. Data Sharing</h2>
+
+  <p>
+    We do not sell your data. We may share limited information:
+  </p>
+  <ul>
+    <li>With our hosting or infrastructure providers, to run the bot.</li>
+    <li>If required to comply with applicable laws, legal requests, or to protect our rights or the rights of others.</li>
+  </ul>
+
+  <h2>4. Data Retention</h2>
+
+  <p>
+    Event and configuration data are retained as long as reasonably needed to operate ChronoBot for your server.
+    If you remove ChronoBot from your server, we may delete related data as part of routine cleanup.
+  </p>
+
+  <h2>5. Children’s Privacy</h2>
+
+  <p>
+    ChronoBot is intended for use in Discord, which is restricted to users aged 13 or older (or the minimum age
+    required in their country). We do not knowingly collect personal information from children under 13.
+  </p>
+
+  <h2>6. Your Choices</h2>
+
+  <p>You can:</p>
+  <ul>
+    <li>Remove ChronoBot from your server at any time.</li>
+    <li>Delete specific events using the bot’s commands.</li>
+    <li>Contact us if you have questions or requests related to your data.</li>
+  </ul>
+
+  <h2>7. Changes to This Privacy Policy</h2>
+
+  <p>
+    We may update this Privacy Policy periodically. When we do, we will update the “Last updated” date at the top.
+    Continued use of ChronoBot after changes are posted means you accept the revised Policy.
+  </p>
+
+  <h2>8. Contact</h2>
+
+  <p>
+    If you have questions about this Privacy Policy, you can contact us at:
+    <br />
+    <strong>Email:</strong> <a href="mailto:[nthorn330@gmail.com]">[nthorn330@gmail.com]</a>
+  </p>
+
+  <p><small>
+    This document is provided for general informational purposes only and does not constitute legal advice.
+    You should consult with a qualified attorney to review and adapt these terms for your specific situation.
+  </small></p>
+</main>
+</body>
+</html>
