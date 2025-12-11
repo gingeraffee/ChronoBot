@@ -152,12 +152,12 @@ async def send_onboarding_for_guild(guild: discord.Guild):
         "I’ll announce milestones at 100 days, 50 days, about 1 month (30 days), 14 days, 1 week, 2 days, "
         "the day before, and on the day of the event.\n\n"
         "Here’s what I can do:\n"
-        "• `/createevent` – Create a new countdown\n"
+        "• `/addevent` – Create a new countdown\n"
         "• `/listevents` – List all countdowns\n"
         "• `/seteventchannel` – Choose which channel I post in\n"
         "• `/update_countdown` – Refresh the pinned countdown message\n"
         "• `/remindall` – Send a whimsical reminder about the next upcoming event in the events channel\n"
-        "• `/help` – Show this help again\n"
+        "• `/chronohelp` – Show this help again\n"
     )
 
     sent = False
@@ -715,14 +715,30 @@ async def remindall(interaction: discord.Interaction):
         time_left=time_desc,
     )
 
-    # Send the reminder in the events channel
-    await event_channel.send(text)
+    try:
+        # Send the reminder in the events channel
+        await event_channel.send(text)
+    except discord.Forbidden:
+        # Bot can't send messages or can't mention everyone
+        await interaction.response.send_message(
+            f"🚫 I couldn't send a reminder in {event_channel.mention}. "
+            "Check my **Send Messages** and **Mention Everyone** permissions.",
+            ephemeral=True,
+        )
+        return
+    except discord.HTTPException as e:
+        await interaction.response.send_message(
+            f"⚠️ I tried to send a reminder, but Discord returned an error: `{e}`",
+            ephemeral=True,
+        )
+        return
 
     # Let the command user know it was sent
     await interaction.response.send_message(
         f"✅ Sent a reminder for **{ev['name']}** in {event_channel.mention}.",
         ephemeral=True,
     )
+
 
 @bot.tree.command(name="resendsetup", description="Resend the onboarding/setup message.")
 @app_commands.checks.has_permissions(manage_guild=True)
