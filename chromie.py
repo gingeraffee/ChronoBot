@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
-
+import random
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
@@ -31,6 +31,13 @@ TOKEN = os.getenv("DISCORD_BOT_TOKEN", "").strip()
 #     TOKEN = "YOUR_BOT_TOKEN_HERE"
 
 EMBED_COLOR = discord.Color.from_rgb(140, 82, 255)  # ChronoBot purple
+
+REMINDER_LINES = [
+    "⏰ {ping} Time ripple from Chromie! **{name}** is coming up in **{time_left}**. Start the hype! ✨",
+    "✨ {ping} Starlight check-in: **{name}** is just **{time_left}** away. Make sure you’re ready! 💫",
+    "💌 {ping} Little love note from the timeline: **{name}** is in **{time_left}**. Prep your snacks and vibes. 🕒",
+    "🪄 {ping} Chrono magic says **{name}** is only **{time_left}** away. Who’s excited? 🎉",
+]
 
 # ==========================
 # STATE HANDLING
@@ -657,6 +664,73 @@ async def update_countdown_cmd(interaction: discord.Interaction):
         ephemeral=True,
     )
 
+@bot.tree.command(
+    name="remindall",
+    description="Drop a whimsical reminder about the next upcoming event in the events channel."
+)
+@app_commands.guild_only()
+async def remindall(interaction: discord.Interaction):
+    guild = interaction.guild
+    assert guild is not None
+
+    guild_state = get_guild_state(guild.id)
+    sort_events(guild_state)
+
+    channel_id = guild_state.get("event_channel_id")
+    if not channel_id:
+        await interaction.response.send_message(
+            "I don't know which channel to use yet.\n"
+            "Run `/seteventchannel` in the channel where you want the countdown pinned.",
+            ephemeral=True,
+        )
+        return
+
+    # Find the configured events channel
+    event_channel = bot.get_channel(channel_id)
+    if not isinstance(event_channel, discord.TextChannel):
+        await interaction.response.send_message(
+            "The configured events channel is missing or not a text channel anymore.",
+            ephemeral=True,
+        )
+        return
+
+    # Find the next upcoming event (not already passed)
+    upcoming = None
+    for ev in guild_state.get("events", []):
+        dt = datetime.fromtimestamp(ev["timestamp"], tz=DEFAULT_TZ)
+        desc, days_left, passed = compute_time_left(dt)
+        if not passed and days_left >= 0:
+            upcoming = (ev, desc)
+            break
+
+    if not upcoming:
+        await interaction.response.send_message(
+            "There are no upcoming events to remind everyone about.",
+            ephemeral=True,
+        )
+        return
+
+    ev, time_desc = upcoming
+
+    # Build a fun reminder line
+    line_template = random.choice(REMINDER_LINES)
+    # This will ping everyone in the channel (if the bot has permission to use @everyone)
+    ping = "@everyone"
+
+    text = line_template.format(
+        ping=ping,
+        name=ev["name"],
+        time_left=time_desc,
+    )
+
+    # Send the reminder in the events channel
+    await event_channel.send(text)
+
+    # Let the command user know it was sent
+    await interaction.response.send_message(
+        f"✅ Sent a reminder for **{ev['name']}** in {event_channel.mention}.",
+        ephemeral=True,
+    )
 
 @bot.tree.command(name="resendsetup", description="Resend the onboarding/setup message.")
 @app_commands.checks.has_permissions(manage_guild=True)
@@ -716,5 +790,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
