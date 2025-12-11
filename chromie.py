@@ -660,11 +660,11 @@ async def update_countdown_cmd(interaction: discord.Interaction):
     )
 
 @bot.tree.command(
-    name="remindall",
+    name="remindallnow",
     description="Drop a whimsical reminder about the next upcoming event in the events channel."
 )
 @app_commands.guild_only()
-async def remindall(interaction: discord.Interaction):
+async def remindallnow(interaction: discord.Interaction):
     guild = interaction.guild
     assert guild is not None
 
