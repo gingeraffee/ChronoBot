@@ -9,6 +9,9 @@ import discord
 from discord.ext import commands, tasks
 from discord import app_commands
 
+VERSION = "ChronoBot v3.0 (2025-12-12)"
+print("BOOTING:", VERSION)
+
 # ==========================
 # CONFIG
 # ==========================
@@ -226,17 +229,17 @@ async def send_onboarding_for_guild(guild: discord.Guild):
 
 @bot.event
 async def on_ready():
-    print(f"Logged in as {bot.user} (ID: {bot.user.id})")
+    print(f"Logged in as {bot.user} ({bot.user.id})")
 
-    # Sync slash commands
-    try:
+    dev_guild_id = int(os.getenv("DEV_GUILD_ID", "0"))
+    if dev_guild_id:
+        guild = discord.Object(id=dev_guild_id)
+        bot.tree.copy_global_to(guild=guild)
+        await bot.tree.sync(guild=guild)
+        print(f"✅ Synced commands to guild {dev_guild_id} (instant)")
+    else:
         await bot.tree.sync()
-        print("Slash commands synced.")
-    except Exception as e:
-        print(f"Error syncing commands: {e}")
-
-    if not update_countdowns.is_running():
-        update_countdowns.start()
+        print("✅ Synced commands globally (may take time to appear)")
 
 
 @bot.event
@@ -1276,3 +1279,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
