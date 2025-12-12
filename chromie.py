@@ -226,21 +226,29 @@ async def send_onboarding_for_guild(guild: discord.Guild):
     guild_state["welcomed"] = True
     save_state()
 
+CLEANUP_GLOBAL_COMMANDS = os.getenv("CLEANUP_GLOBAL_COMMANDS", "0") == "1"
+DEV_GUILD_ID = int(os.getenv("DEV_GUILD_ID", "0") or 0)
 
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user} ({bot.user.id})")
 
-    dev_guild_id = int(os.getenv("DEV_GUILD_ID", "0"))
-    if dev_guild_id:
-        guild = discord.Object(id=dev_guild_id)
+    # --- ONE-TIME: delete ALL global commands ---
+    if CLEANUP_GLOBAL_COMMANDS:
+        bot.tree.clear_commands(guild=None)   # clears local view of global commands
+        await bot.tree.sync()                 # pushes empty -> deletes global commands remotely
+        print("🧹 Deleted GLOBAL slash commands. Turn CLEANUP_GLOBAL_COMMANDS off and redeploy.")
+        return
+
+    # --- Normal dev behavior: guild sync (instant) ---
+    if DEV_GUILD_ID:
+        guild = discord.Object(id=DEV_GUILD_ID)
         bot.tree.copy_global_to(guild=guild)
         await bot.tree.sync(guild=guild)
-        print(f"✅ Synced commands to guild {dev_guild_id} (instant)")
+        print(f"✅ Synced to guild {DEV_GUILD_ID}")
     else:
         await bot.tree.sync()
-        print("✅ Synced commands globally (may take time to appear)")
-
+        print("✅ Synced globally (may take time)")
 
 @bot.event
 async def on_guild_join(guild: discord.Guild):
@@ -1279,4 +1287,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
