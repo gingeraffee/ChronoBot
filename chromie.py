@@ -851,6 +851,7 @@ async def chronohelp(interaction: discord.Interaction):
         "• `/reorder index: position:` – move an event in the list\n"
         "• `/removeevent index:` – delete an event\n\n"
         "**Milestones & notifications**\n"
+        "• `/remindall` – send a notification to the channel about the event\n"
         "• `/setmilestones index:` – set custom milestone days\n"
         "• `/resetmilestones index:` – restore default milestones\n"
         "• `/silence index:` – stop reminders for an event (keeps it listed)\n"
