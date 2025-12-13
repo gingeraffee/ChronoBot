@@ -691,6 +691,59 @@ async def removeevent(interaction: discord.Interaction, index: int):
         f"🗑 Removed event **{ev['name']}**.",
         ephemeral=True,
     )
+
+
+async def _event_index_autocomplete(
+    interaction: discord.Interaction,
+    current: str,
+) -> list[app_commands.Choice[int]]:
+    guild = interaction.guild
+    if guild is None:
+        return []
+
+    guild_state = get_guild_state(guild.id)
+    sort_events(guild_state)
+    events = guild_state.get("events", []) or []
+    if not events:
+        return []
+
+    current_l = (current or "").lower().strip()
+    choices: list[app_commands.Choice[int]] = []
+
+    for i, ev in enumerate(events):
+        idx = i + 1
+        name = ev.get("name", "(Unnamed)")
+        dt = datetime.fromtimestamp(ev["timestamp"], tz=DEFAULT_TZ)
+
+        # compute_time_left signature has varied across builds
+        try:
+            _, days_left, passed = compute_time_left(dt, DEFAULT_TZ)
+        except TypeError:
+            _, days_left, passed = compute_time_left(dt)
+
+        if passed:
+            when = "passed"
+        elif days_left == 0:
+            when = "today"
+        elif days_left == 1:
+            when = "tomorrow"
+        else:
+            when = f"{days_left}d"
+
+        label = f"{idx}. {name} — {dt.strftime('%b %d')} ({when})"
+
+        # Filter by what the user typed (matches index or event name)
+        if current_l:
+            if current_l not in str(idx) and current_l not in name.lower():
+                continue
+
+        # Discord limits: max 25 choices, name max 100 chars
+        choices.append(app_commands.Choice(name=label[:100], value=idx))
+        if len(choices) >= 25:
+            break
+
+    return choices
+    
 @bot.tree.command(
     name="remindall",
     description="Pick an event from a dropdown and post a fun @everyone reminder."
@@ -790,58 +843,6 @@ async def remindall(interaction: discord.Interaction, index: int):
         f"✅ Announced **{name}** (event **#{index}**) in {channel.mention}.",
         ephemeral=True,
     )
-
-
-async def _event_index_autocomplete(
-    interaction: discord.Interaction,
-    current: str,
-) -> list[app_commands.Choice[int]]:
-    guild = interaction.guild
-    if guild is None:
-        return []
-
-    guild_state = get_guild_state(guild.id)
-    sort_events(guild_state)
-    events = guild_state.get("events", []) or []
-    if not events:
-        return []
-
-    current_l = (current or "").lower().strip()
-    choices: list[app_commands.Choice[int]] = []
-
-    for i, ev in enumerate(events):
-        idx = i + 1
-        name = ev.get("name", "(Unnamed)")
-        dt = datetime.fromtimestamp(ev["timestamp"], tz=DEFAULT_TZ)
-
-        # compute_time_left signature has varied across builds
-        try:
-            _, days_left, passed = compute_time_left(dt, DEFAULT_TZ)
-        except TypeError:
-            _, days_left, passed = compute_time_left(dt)
-
-        if passed:
-            when = "passed"
-        elif days_left == 0:
-            when = "today"
-        elif days_left == 1:
-            when = "tomorrow"
-        else:
-            when = f"{days_left}d"
-
-        label = f"{idx}. {name} — {dt.strftime('%b %d')} ({when})"
-
-        # Filter by what the user typed (matches index or event name)
-        if current_l:
-            if current_l not in str(idx) and current_l not in name.lower():
-                continue
-
-        # Discord limits: max 25 choices, name max 100 chars
-        choices.append(app_commands.Choice(name=label[:100], value=idx))
-        if len(choices) >= 25:
-            break
-
-    return choices
 
         
 @bot.tree.command(name="update_countdown", description="Force-refresh the pinned countdown.")
