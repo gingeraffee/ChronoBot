@@ -60,24 +60,51 @@ State structure (high level):
 
 
 def load_state() -> dict:
+    data = {}
     if DATA_FILE.exists():
         try:
             with open(DATA_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
-        except Exception:
+        except Exception as e:
+            # Preserve the broken file so data isn't permanently lost
+            try:
+                ts = datetime.now(DEFAULT_TZ).strftime("%Y%m%d-%H%M%S")
+                corrupt_path = DATA_FILE.with_suffix(DATA_FILE.suffix + f".corrupt.{ts}")
+                DATA_FILE.rename(corrupt_path)
+                print(f"[STATE] State file was invalid JSON. Renamed to: {corrupt_path.name}")
+            except Exception:
+                print("[STATE] State file was invalid JSON and could not be renamed.")
             data = {}
-    else:
-        data = {}
 
     data.setdefault("guilds", {})
     data.setdefault("user_links", {})
     return data
 
 
+
+def sort_events(guild_state: dict):
+    events = guild_state.get("events")
+    if not isinstance(events, list):
+        events = []
+    events.sort(key=lambda ev: ev.get("timestamp", 0))
+    guild_state["events"] = events
+
+
 def save_state():
     DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2)
+
+    tmp_path = DATA_FILE.with_suffix(DATA_FILE.suffix + ".tmp")
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2)
+        os.replace(tmp_path, DATA_FILE)  # atomic on most platforms
+    finally:
+        # If something went sideways, don't leave tmp clutter
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except Exception:
+                pass
 
 
 def get_guild_state(guild_id: int) -> dict:
@@ -102,13 +129,6 @@ def get_guild_state(guild_id: int) -> dict:
 
 def get_user_links() -> dict:
     return state.setdefault("user_links", {})
-
-
-def sort_events(guild_state: dict):
-    events = guild_state.get("events", [])
-    events.sort(key=lambda ev: ev.get("timestamp", 0))
-    guild_state["events"] = events
-
 
 def _today_local_date() -> date:
     return datetime.now(DEFAULT_TZ).date()
@@ -198,7 +218,22 @@ save_state()
 # ==========================
 
 intents = discord.Intents.default()
-bot = commands.Bot(command_prefix="None", intents=intents)
+
+class ChromieBot(commands.Bot):
+    async def setup_hook(self):
+        # Runs once at startup (best place to sync commands)
+        try:
+            await self.tree.sync()
+            print("Slash commands synced (setup_hook).")
+        except Exception as e:
+            print(f"Error syncing commands (setup_hook): {e}")
+
+        # Start the background loop once
+        if not update_countdowns.is_running():
+            update_countdowns.start()
+
+bot = ChromieBot(command_prefix="!", intents=intents)
+
 
 
 async def get_bot_member(guild: discord.Guild) -> Optional[discord.Member]:
@@ -236,7 +271,6 @@ async def send_onboarding_for_guild(guild: discord.Guild):
         "• `/editevent` – tweak name/date/time without re-adding\n"
         "• `/remindall` – ping the channel about the next (or chosen) event\n"
         "• `/dupeevent` – clone an event (perfect for yearly stuff)\n"
-        "• `/reorder` – move an event up/down in the list\n"
         "• `/seteventowner` – assign an owner and I’ll DM them at reminders\n"
         "• `/setrepeat index: <number> every_days: <days>` – repeating reminders every X days\n"
         "   - Daily example: `/setrepeat index: 1 every_days: 1`\n"
@@ -277,16 +311,6 @@ async def send_onboarding_for_guild(guild: discord.Guild):
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user} (ID: {bot.user.id})")
-
-    try:
-        await bot.tree.sync()
-        print("Slash commands synced.")
-    except Exception as e:
-        print(f"Error syncing commands: {e}")
-
-    if not update_countdowns.is_running():
-        update_countdowns.start()
-
 
 @bot.event
 async def on_guild_join(guild: discord.Guild):
@@ -368,22 +392,71 @@ async def get_or_create_pinned_message(guild_id: int, channel: discord.TextChann
     sort_events(guild_state)
     pinned_id = guild_state.get("pinned_message_id")
 
-    if pinned_id:
+    # ---- Permission guard (bot perms in this channel) ----
+    bot_member = await get_bot_member(channel.guild)
+    if bot_member is None:
+        print(f"[Guild {guild_id}] Could not resolve bot member for permissions.")
+        return None
+
+    perms = channel.permissions_for(bot_member)
+    if not perms.view_channel or not perms.send_messages:
+        print(f"[Guild {guild_id}] Missing view/send permissions in #{channel.name}.")
+        return None
+
+    # ---- If we have a stored pinned ID, try to fetch it (requires Read Message History) ----
+    if pinned_id and not perms.read_message_history:
+        print(
+            f"[Guild {guild_id}] Missing Read Message History in #{channel.name}. "
+            "Clearing pinned_message_id and creating a new pinned message."
+        )
+        guild_state["pinned_message_id"] = None
+        save_state()
+        pinned_id = None
+
         try:
-            msg = await channel.fetch_message(pinned_id)
+            msg = await channel.fetch_message(int(pinned_id))
             return msg
         except discord.NotFound:
-            pass
+            # Message deleted – clear and recreate below
+            guild_state["pinned_message_id"] = None
+            save_state()
+        except discord.Forbidden:
+            print(
+                f"[Guild {guild_id}] Forbidden fetching pinned message in #{channel.name}. "
+                "Clearing pinned_message_id."
+            )
+            guild_state["pinned_message_id"] = None
+            save_state()
+            return None
+        except discord.HTTPException as e:
+            print(
+                f"[Guild {guild_id}] HTTP error fetching pinned message: {e}. "
+                "Clearing pinned_message_id."
+            )
+            guild_state["pinned_message_id"] = None
+            save_state()
+            return None
 
+    # ---- Create a new message (and pin if allowed) ----
     embed = build_embed_for_guild(guild_state)
-    msg = await channel.send(embed=embed)
-
     try:
-        await msg.pin()
+        msg = await channel.send(embed=embed)
     except discord.Forbidden:
-        print(f"[Guild {guild_id}] Missing permission to pin messages.")
+        print(f"[Guild {guild_id}] Missing permission to send messages in #{channel.name}.")
+        return None
     except discord.HTTPException as e:
-        print(f"[Guild {guild_id}] Failed to pin message: {e}")
+        print(f"[Guild {guild_id}] Failed to send pinned message: {e}")
+        return None
+
+    if perms.manage_messages:
+        try:
+            await msg.pin()
+        except discord.Forbidden:
+            print(f"[Guild {guild_id}] Forbidden pinning messages in #{channel.name}.")
+        except discord.HTTPException as e:
+            print(f"[Guild {guild_id}] Failed to pin message: {e}")
+    else:
+        print(f"[Guild {guild_id}] Missing Manage Messages in #{channel.name} (can't pin).")
 
     guild_state["pinned_message_id"] = msg.id
     save_state()
@@ -435,16 +508,9 @@ def build_milestone_mention(channel: discord.TextChannel, guild_state: dict) -> 
     return "", discord.AllowedMentions.none()
 
 
-def build_everyone_mention(channel: discord.TextChannel) -> Tuple[str, discord.AllowedMentions]:
-    """
-    /remindall: attempt @everyone if permitted.
-    """
-    # Permission check (safe)
-    perms = channel.permissions_for(channel.guild.default_role)
-    # We'll verify bot perms separately; this is just a baseline object.
-    # Actual permission for the bot is checked in command.
+def build_everyone_mention() -> Tuple[str, discord.AllowedMentions]:
+    """Return an @everyone mention + allowed mention settings (only use if bot has mention_everyone)."""
     return "@everyone ", discord.AllowedMentions(everyone=True)
-
 
 # ==========================
 # BACKGROUND LOOP
@@ -453,134 +519,166 @@ def build_everyone_mention(channel: discord.TextChannel) -> Tuple[str, discord.A
 @tasks.loop(seconds=UPDATE_INTERVAL_SECONDS)
 async def update_countdowns():
     guilds = state.get("guilds", {})
-
     for gid_str, guild_state in list(guilds.items()):
-        guild_id = int(gid_str)
-        sort_events(guild_state)
-
-        channel_id = guild_state.get("event_channel_id")
-        if not channel_id:
-            continue
-
-        channel = await get_text_channel(channel_id)
-        if channel is None:
-            continue
-
-        # Update pinned embed
-        pinned = await get_or_create_pinned_message(guild_id, channel)
-        embed = build_embed_for_guild(guild_state)
         try:
-            await pinned.edit(embed=embed)
-        except discord.HTTPException as e:
-            print(f"[Guild {guild_id}] Failed to edit pinned message: {e}")
+            guild_id = int(gid_str)
+            sort_events(guild_state)
 
-        today = _today_local_date()
-
-        # Milestone + repeating reminder checks
-        for ev in guild_state.get("events", []):
-            dt = datetime.fromtimestamp(ev["timestamp"], tz=DEFAULT_TZ)
-
-            # event display text for repeating reminder
-            desc, _, passed = compute_time_left(dt)
-
-            # Skip passed events
-            now = datetime.now(DEFAULT_TZ)
-            if dt <= now or passed:
+            channel_id = guild_state.get("event_channel_id")
+            if not channel_id:
                 continue
 
-            # Skip reminders if silenced
-            if ev.get("silenced", False):
+            channel = await get_text_channel(channel_id)
+            if channel is None:
                 continue
 
-            milestone_sent_today = False
-
-            # Milestones use calendar-day difference (fixes "tomorrow" edge cases)
-            days_left_cal = calendar_days_left(dt)
-            if days_left_cal < 0:
-                continue
-
-            milestones = ev.get("milestones", DEFAULT_MILESTONES)
-            announced = ev.get("announced_milestones", [])
-
-            if days_left_cal in milestones and days_left_cal not in announced:
-                mention_prefix, allowed = build_milestone_mention(channel, guild_state)
-
-                if days_left_cal == 1:
-                    text = f"{mention_prefix}✨ **{ev['name']}** is **tomorrow**! ✨"
-                elif days_left_cal == 0:
-                    text = f"{mention_prefix}🎉 **{ev['name']}** is **today**! 🎉"
-                else:
-                    text = (
-                        f"{mention_prefix}💌 **{ev['name']}** is **{days_left_cal} day"
-                        f"{'s' if days_left_cal != 1 else ''}** away!"
-                    )
-
+            # -------------------------
+            # Update pinned embed (hardened)
+            # -------------------------
+            bot_member = channel.guild.get_member(bot.user.id) if bot.user else None
+            if bot_member is None and bot.user:
                 try:
-                    await channel.send(text, allowed_mentions=allowed)
+                    bot_member = await channel.guild.fetch_member(bot.user.id)
+                except Exception:
+                    continue
+
+            if bot_member is None:
+                continue
+
+            pinned = await get_or_create_pinned_message(guild_id, channel)
+            if pinned is None:
+                print(f"[Guild {guild_id}] Could not create/access pinned message in #{channel.name}. Check permissions.")
+            else:
+                embed = build_embed_for_guild(guild_state)
+                try:
+                    await pinned.edit(embed=embed)
                 except discord.Forbidden:
-                    pass
-                except Exception:
-                    pass
+                    print(f"[Guild {guild_id}] Missing permission to edit pinned message in #{channel.name}.")
+                except discord.HTTPException as e:
+                    print(f"[Guild {guild_id}] Failed to edit pinned message: {e}")
 
-                # DM owner too (if set)
-                try:
-                    await dm_owner_if_set(
-                        channel.guild,
-                        ev,
-                        f"⏰ Reminder: **{ev['name']}** is in **{desc}** "
-                        f"(scheduled for {dt.strftime('%B %d, %Y at %I:%M %p %Z')})."
-                    )
-                except Exception:
-                    pass
 
-                milestone_sent_today = True
-                announced.append(days_left_cal)
-                ev["announced_milestones"] = announced
-                save_state()
+            # -------------------------
+            # Milestone + repeating reminder checks
+            # -------------------------
+            today = _today_local_date()
 
-            # Repeating reminders (every X days)
-            repeat_every = ev.get("repeat_every_days")
-            if isinstance(repeat_every, int) and repeat_every > 0:
-                anchor_str = ev.get("repeat_anchor_date") or today.isoformat()
-                try:
-                    anchor = date.fromisoformat(anchor_str)
-                except ValueError:
-                    anchor = today
-                    ev["repeat_anchor_date"] = anchor.isoformat()
+            for ev in guild_state.get("events", []):
+                # Respect /silence
+                if ev.get("silenced", False):
+                    continue
 
-                days_since_anchor = (today - anchor).days
+                ts = ev.get("timestamp")
+                if not isinstance(ts, int):
+                    # bad state entry; skip instead of crashing loop
+                    continue
 
-                # Start repeating reminders the day after setup, then every N days
-                if days_since_anchor > 0 and (days_since_anchor % repeat_every == 0):
-                    sent_dates = ev.get("announced_repeat_dates", [])
-                    if today.isoformat() not in sent_dates:
-                        # Avoid double-posting if milestone posted today
-                        if not milestone_sent_today:
-                            date_str = dt.strftime("%B %d, %Y")
-                            try:
-                                await channel.send(
-                                    f"🔁 Reminder: **{ev['name']}** is in **{desc}** (on **{date_str}**)."
-                                )
-                            except discord.Forbidden:
-                                pass
-                            except Exception:
-                                pass
+                dt = datetime.fromtimestamp(ts, tz=DEFAULT_TZ)
 
-                        # DM owner too (if set)
-                        try:
-                            await dm_owner_if_set(
-                                channel.guild,
-                                ev,
-                                f"🔁 Repeat reminder: **{ev['name']}** is in **{desc}** "
-                                f"(on {dt.strftime('%B %d, %Y')})."
-                            )
-                        except Exception:
-                            pass
+                desc, _, passed = compute_time_left(dt)
+                milestone_sent_today = False
 
-                        sent_dates.append(today.isoformat())
-                        ev["announced_repeat_dates"] = sent_dates[-180:]
-                        save_state()
+                days_left = calendar_days_left(dt)
+                now = datetime.now(DEFAULT_TZ)
+                if dt <= now or passed or days_left < 0:
+                    continue
 
+                milestones = ev.get("milestones", DEFAULT_MILESTONES)
+                announced = ev.get("announced_milestones", [])
+                if not isinstance(announced, list):
+                    announced = []
+                    ev["announced_milestones"] = announced
+
+                # ---- Milestones ----
+                if days_left in milestones and days_left not in announced:
+                    mention_prefix, allowed_mentions = build_milestone_mention(channel, guild_state)
+
+                    if days_left == 0:
+                        text = f"{mention_prefix}🎉 **{ev.get('name', 'Event')}** is **today**! 🎉"
+                    elif days_left == 1:
+                        text = f"{mention_prefix}✨ **{ev.get('name', 'Event')}** is **tomorrow**! ✨"
+                    else:
+                        text = (
+                            f"{mention_prefix}💌 **{ev.get('name', 'Event')}** is **{days_left} day"
+                            f"{'s' if days_left != 1 else ''}** away!"
+                        )
+
+                    try:
+                        await channel.send(text, allowed_mentions=allowed_mentions)
+                    except discord.Forbidden:
+                        continue
+                    except discord.HTTPException as e:
+                        print(f"[Guild {guild_id}] Failed to send milestone message: {e}")
+                        continue
+
+                    try:
+                        await dm_owner_if_set(
+                            channel.guild,
+                            ev,
+                            f"⏰ Milestone: **{ev.get('name', 'Event')}** is in **{days_left} day{'s' if days_left != 1 else ''}** "
+                            f"(on {dt.strftime('%B %d, %Y at %I:%M %p %Z')})."
+                        )
+                    except Exception:
+                        pass
+
+                    milestone_sent_today = True
+                    announced.append(days_left)
+                    ev["announced_milestones"] = announced
+                    save_state()
+
+                # ---- Repeating reminders (every X days) ----
+                repeat_every = ev.get("repeat_every_days")
+                if isinstance(repeat_every, int) and repeat_every > 0:
+                    anchor_str = ev.get("repeat_anchor_date") or today.isoformat()
+                    try:
+                        anchor = date.fromisoformat(anchor_str)
+                    except ValueError:
+                        anchor = today
+                        ev["repeat_anchor_date"] = anchor.isoformat()
+
+                    days_since_anchor = (today - anchor).days
+
+                    if days_since_anchor > 0 and (days_since_anchor % repeat_every == 0):
+                        sent_dates = ev.get("announced_repeat_dates", [])
+                        if not isinstance(sent_dates, list):
+                            sent_dates = []
+                            ev["announced_repeat_dates"] = sent_dates
+
+                        if today.isoformat() not in sent_dates:
+                            if not milestone_sent_today:
+                                date_str = dt.strftime("%B %d, %Y")
+                                try:
+                                    await channel.send(
+                                        f"🔁 Reminder: **{ev.get('name', 'Event')}** is in **{desc}** (on **{date_str}**)."
+                                    )
+                                except discord.Forbidden:
+                                    continue
+                                except discord.HTTPException as e:
+                                    print(f"[Guild {guild_id}] Failed to send repeat reminder: {e}")
+                                    continue
+
+                                try:
+                                    await dm_owner_if_set(
+                                        channel.guild,
+                                        ev,
+                                        f"🔁 Repeat reminder: **{ev.get('name', 'Event')}** is in **{desc}** "
+                                        f"(on {dt.strftime('%B %d, %Y at %I:%M %p %Z')})."
+                                    )
+                                except Exception:
+                                    pass
+
+                            sent_dates.append(today.isoformat())
+                            ev["announced_repeat_dates"] = sent_dates[-180:]
+                            save_state()
+
+        except Exception as e:
+            # Catch-all so one guild's bad state doesn't kill the loop
+            print(f"[Guild {gid_str}] update_countdowns crashed for this guild: {type(e).__name__}: {e}")
+            continue
+
+@update_countdowns.before_loop
+async def before_update_countdowns():
+    await bot.wait_until_ready()
 
 # ==========================
 # SLASH COMMANDS
@@ -1013,50 +1111,6 @@ async def dupeevent(interaction: discord.Interaction, index: int, date: str, tim
     )
 
 
-@bot.tree.command(name="reorder", description="Move an event in the list.")
-@app_commands.describe(
-    index="Event to move (from /listevents)",
-    position="New position (1 = top)",
-)
-@app_commands.checks.has_permissions(manage_guild=True)
-@app_commands.guild_only()
-async def reorder(interaction: discord.Interaction, index: int, position: int):
-    guild = interaction.guild
-    assert guild is not None
-
-    g = get_guild_state(guild.id)
-    sort_events(g)
-    events = g.get("events", [])
-
-    if not events:
-        await interaction.response.send_message("No events to reorder.", ephemeral=True)
-        return
-
-    if index < 1 or index > len(events):
-        await interaction.response.send_message(f"Index must be between 1 and {len(events)}.", ephemeral=True)
-        return
-
-    if position < 1 or position > len(events):
-        await interaction.response.send_message(f"Position must be between 1 and {len(events)}.", ephemeral=True)
-        return
-
-    ev = events.pop(index - 1)
-    events.insert(position - 1, ev)
-    g["events"] = events
-    save_state()
-
-    ch_id = g.get("event_channel_id")
-    if ch_id:
-        ch = await get_text_channel(ch_id)
-        if ch:
-            await rebuild_pinned_message(guild.id, ch, g)
-
-    await interaction.response.send_message(
-        f"✅ Moved **{ev['name']}** to position **{position}**.",
-        ephemeral=True,
-    )
-
-
 @bot.tree.command(name="remindall", description="Send a notification to the channel about an event.")
 @app_commands.describe(
     index="Optional: event number from /listevents (defaults to next upcoming event)",
@@ -1123,7 +1177,7 @@ async def remindall(interaction: discord.Interaction, index: Optional[int] = Non
     allowed = discord.AllowedMentions.none()
 
     if perms.mention_everyone:
-        mention_prefix, allowed = build_everyone_mention(channel)
+        mention_prefix, allowed = build_everyone_mention()
     else:
         # Fallback to role mention if configured
         mention_prefix, allowed = build_milestone_mention(channel, g)
@@ -1446,11 +1500,13 @@ async def healthcheck(interaction: discord.Interaction):
             bot_member = await get_bot_member(guild)
             if bot_member:
                 perms = ch.permissions_for(bot_member)
+                lines.append(f"• Can view channel: {'✅' if perms.view_channel else '❌'}")
                 lines.append(f"• Can send messages: {'✅' if perms.send_messages else '❌'}")
                 lines.append(f"• Can embed links: {'✅' if perms.embed_links else '❌'}")
-                lines.append(f"• Can manage messages (edit pinned): {'✅' if perms.manage_messages else '❌'}")
-                lines.append(f"• Can mention @everyone: {'✅' if perms.mention_everyone else '❌'}")
                 lines.append(f"• Can read history: {'✅' if perms.read_message_history else '❌'}")
+                lines.append(f"• Can manage messages (pin/unpin): {'✅' if perms.manage_messages else '❌'}")
+                lines.append(f"• Can mention @everyone: {'✅' if perms.mention_everyone else '❌'}")
+
             else:
                 lines.append("• Bot member resolution: ❌ (couldn’t fetch bot member)")
         else:
@@ -1501,25 +1557,50 @@ async def update_countdown_cmd(interaction: discord.Interaction):
 
     g = get_guild_state(guild.id)
     sort_events(g)
-    channel_id = g.get("event_channel_id")
 
+    channel_id = g.get("event_channel_id")
     if not channel_id:
-        await interaction.response.send_message("No events channel set yet. Run `/seteventchannel` first.", ephemeral=True)
+        await interaction.response.send_message(
+            "No events channel set yet. Run `/seteventchannel` first.",
+            ephemeral=True,
+        )
         return
 
     if interaction.channel_id != channel_id:
-        await interaction.response.send_message("Please run this command in the configured events channel.", ephemeral=True)
+        await interaction.response.send_message(
+            "Please run this command in the configured events channel.",
+            ephemeral=True,
+        )
         return
 
     channel = interaction.channel
     assert isinstance(channel, discord.TextChannel)
 
     pinned = await get_or_create_pinned_message(guild.id, channel)
+    if pinned is None:
+        await interaction.response.send_message(
+            "I couldn't create or access the pinned countdown message here. Check my permissions.",
+            ephemeral=True,
+        )
+        return
+
     embed = build_embed_for_guild(g)
-    await pinned.edit(embed=embed)
+    try:
+        await pinned.edit(embed=embed)
+    except discord.Forbidden:
+        await interaction.response.send_message(
+            "I don't have permission to edit that pinned message (need Manage Messages).",
+            ephemeral=True,
+        )
+        return
+    except discord.HTTPException as e:
+        await interaction.response.send_message(
+            f"Discord errored while updating the pinned message: {e}",
+            ephemeral=True,
+        )
+        return
 
     await interaction.response.send_message("⏱ Countdown updated.", ephemeral=True)
-
 
 @bot.tree.command(name="resendsetup", description="Resend the onboarding/setup message.")
 @app_commands.checks.has_permissions(manage_guild=True)
@@ -1555,7 +1636,6 @@ async def chronohelp(interaction: discord.Interaction):
         "**Edit & organize**\n"
         "• `/editevent index:` – edit name/date/time\n"
         "• `/dupeevent index: date:` – duplicate an event (optional time/name)\n"
-        "• `/reorder index: position:` – move an event in the list\n"
         "• `/removeevent index:` – delete an event\n\n"
         "**Repeating reminders (every X days)**\n"
         "• `/setrepeat index: every_days:` – turn on repeating reminders (1 = daily, 7 = weekly)\n"
