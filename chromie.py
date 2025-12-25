@@ -397,7 +397,12 @@ async def rebuild_pinned_message(guild_id: int, channel: discord.TextChannel, gu
     return msg
 
 
-async def get_or_create_pinned_message(guild_id: int, channel: discord.TextChannel):
+async def get_or_create_pinned_message(
+    guild_id: int,
+    channel: discord.TextChannel,
+    *,
+    allow_create: bool = False,   # <-- KEY: background loop should pass False
+):
     guild_state = get_guild_state(guild_id)
     sort_events(guild_state)
     pinned_id = guild_state.get("pinned_message_id")
@@ -405,31 +410,42 @@ async def get_or_create_pinned_message(guild_id: int, channel: discord.TextChann
     # ---- Permission guard (bot perms in this channel) ----
     bot_member = await get_bot_member(channel.guild)
     if bot_member is None:
-        print(f"[Guild {guild_id}] Could not resolve bot member for permissions.")
+        # (optional: throttled log)
+        # log_throttled(guild_id, "bot_member_missing", f"[Guild {guild_id}] Could not resolve bot member.")
         return None
 
     perms = channel.permissions_for(bot_member)
     if not perms.view_channel or not perms.send_messages:
+        # (optional: throttled log)
+        # log_throttled(guild_id, "no_view_send", f"[Guild {guild_id}] Missing view/send in #{channel.name}.")
         return None
 
     # ---- If we have a stored pinned ID, try to fetch it ----
     if pinned_id:
-        # If we can't read history, we can't fetch/edit, so DO NOT create new messages.
+        # If we can't read history, we can't fetch/edit.
         if not perms.read_message_history:
+            # IMPORTANT: do NOT create a new message in the background loop.
             return None
 
         try:
             return await channel.fetch_message(int(pinned_id))
-        except (discord.NotFound, discord.Forbidden):
-            # Message deleted or no longer accessible – clear and allow recreation
+        except discord.NotFound:
+            # Message deleted – clear id, but only recreate if allow_create=True
             guild_state["pinned_message_id"] = None
             save_state()
             pinned_id = None
-        except discord.HTTPException as e:
-            print(f"[Guild {guild_id}] HTTP error fetching pinned message: {e}")
+        except discord.Forbidden:
+            # Can't access it – do NOT auto-create (prevents spam)
+            return None
+        except discord.HTTPException:
             return None
 
-    # ---- Only create a message if we truly don't have one stored ----
+    # ---- No stored message id ----
+    if not allow_create:
+        # Background loop should stop here (prevents new message spam)
+        return None
+
+    # ---- Create a new message (only when explicitly allowed) ----
     embed = build_embed_for_guild(guild_state)
     try:
         msg = await channel.send(embed=embed)
@@ -532,8 +548,19 @@ async def update_countdowns():
             if bot_member is None:
                 continue
 
-            pinned = await get_or_create_pinned_message(guild_id, channel)
+            pinned = await get_or_create_pinned_message(guild_id, channel, allow_create=False)
             if pinned is None:
+                continue
+
+            # ✅ Edit the existing pinned message (no new pins, no notifications)
+            embed = build_embed_for_guild(guild_state)
+            try:
+                await pinned.edit(embed=embed)
+            except discord.Forbidden:
+                # Can't edit message (rare; could be missing perms or message not owned by bot)
+                continue
+            except discord.HTTPException as e:
+                print(f"[Guild {guild_id}] Failed to edit pinned message: {e}")
                 continue
 
 
