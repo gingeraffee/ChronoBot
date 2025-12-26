@@ -844,14 +844,12 @@ def get_event_by_index(guild_state: dict, index: int) -> Optional[dict]:
 
 
 def build_milestone_mention(channel: discord.TextChannel, guild_state: dict) -> Tuple[str, discord.AllowedMentions]:
-    """Milestones: mention a configured role (if any)."""
     role_id = guild_state.get("mention_role_id")
     if role_id:
         role = channel.guild.get_role(int(role_id))
         if role:
-            return f"{role.mention} ", discord.AllowedMentions(roles=[role], everyone=False)
+            return f"{role.mention} ", discord.AllowedMentions(roles=True)
     return "", discord.AllowedMentions.none()
-
 
 def build_everyone_mention() -> Tuple[str, discord.AllowedMentions]:
     return "@everyone ", discord.AllowedMentions(everyone=True)
@@ -1098,7 +1096,7 @@ async def update_countdowns():
 
             # ---- Update pinned embed once at end (reflects changes) ----
             pinned = await get_or_create_pinned_message(guild_id, channel, allow_create=True)
-            if pinned is not None and state_changed:
+            if pinned is not None:
                 try:
                     await pinned.edit(embed=build_embed_for_guild(guild_state))
                 except discord.Forbidden:
