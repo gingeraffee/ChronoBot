@@ -1041,52 +1041,78 @@ def chunk_text(text: str, limit: int = 1900) -> list[str]:
 def build_embed_for_guild(guild_state: dict) -> discord.Embed:
     sort_events(guild_state)
     events = guild_state.get("events", [])
-    theme = (guild_state.get("theme") or "default").lower()
+    raw_theme = (guild_state.get("theme") or "default").lower()
+    theme = normalize_theme_key(raw_theme)
 
-    THEME_STYLES = {
+    # One accent color per embed — Discord rule
+    THEME_PROFILES = {
         "default": {
             "title": "Upcoming Event Countdowns",
             "description": "Live countdowns for this server’s events.",
             "color": EMBED_COLOR,
-            "footer_prefix": "",
+            "mode": "fields",
         },
-        "neon": {
-            "title": "✨ CURRENT COUNTDOWNS ✨",
-            "description": "High voltage timekeeping. Handle with sunglasses.",
-            "color": discord.Color.from_rgb(57, 255, 20),
-            "footer_prefix": "⚡ ",
+        "gaming": {
+            "title": "🎮 Party Queue",
+            "description": "Next up: objectives, chaos, and questionable snack decisions.",
+            "color": discord.Color.from_rgb(88, 101, 242),  # blurple-ish
+            "mode": "fields",
         },
-        "minimal": {
+        "arcade": {
+            "title": "🕹️ INSERT COIN",
+            "description": "High-score timekeeping. No continues.",
+            "color": discord.Color.from_rgb(0, 255, 170),   # neon mint
+            "mode": "fields",
+        },
+        "hypebeast": {
+            "title": "💎 NEXT DROP TIMER",
+            "description": "Limited time. Unlimited drip.",
+            "color": discord.Color.from_rgb(20, 20, 20),    # near-black
+            "mode": "fields",
+        },
+        "minimalist": {
             "title": "Event Countdowns",
             "description": "Upcoming events.",
             "color": discord.Color.from_rgb(180, 180, 180),
-            "footer_prefix": "",
+            "mode": "list",  # cleaner in one list
         },
-        "dramatic": {
-            "title": "⏳ THE CLOCK NEVER STOPS ⏳",
-            "description": "Time is happening to all of us.",
-            "color": discord.Color.from_rgb(190, 30, 45),
-            "footer_prefix": "🩸 ",
+        "cutesy": {
+            "title": "🧸 Cozy Countdown Corner",
+            "description": "Tiny reminders with big sparkle energy.",
+            "color": discord.Color.from_rgb(255, 140, 200),  # pink
+            "mode": "fields",
+        },
+        "celebration": {
+            "title": "🎉 Countdown Party Board",
+            "description": "Confetti preloaded. Timing immaculate.",
+            "color": discord.Color.from_rgb(255, 195, 0),    # gold
+            "mode": "fields",
+        },
+        "spooky": {
+            "title": "🕯️ The Haunted Countdown",
+            "description": "The clock whispers… your event approaches.",
+            "color": discord.Color.from_rgb(120, 60, 200),   # purple
+            "mode": "fields",
         },
     }
 
-    style = THEME_STYLES.get(theme, THEME_STYLES["default"])
+    profile = THEME_PROFILES.get(theme, THEME_PROFILES["default"])
 
     embed = discord.Embed(
-        title=style["title"],
-        description=style["description"],
-        color=style["color"],
+        title=profile["title"],
+        description=profile["description"],
+        color=profile["color"],
     )
     embed.timestamp = datetime.now(DEFAULT_TZ)
 
     if not isinstance(events, list) or not events:
         embed.add_field(name="No upcoming events", value="Use `/addevent` to add one.", inline=False)
-        embed.set_footer(text=_append_vote_footer(style["footer_prefix"] + "No events to display."))
+        embed.set_footer(text=_append_vote_footer("No events to display."))
         return embed
 
     now_dt = datetime.now(DEFAULT_TZ)
 
-    # ---- Build a clean list of UPCOMING events only ----
+    # Upcoming only
     upcoming: list[tuple[dict, datetime]] = []
     for ev in events:
         ts = ev.get("timestamp")
@@ -1103,57 +1129,160 @@ def build_embed_for_guild(guild_state: dict) -> discord.Embed:
     if not upcoming:
         embed.add_field(
             name="No upcoming events",
-            value="Everything on the list has already started or passed. Add a new one with `/addevent`.",
+            value="Everything has started/passed. Add a new one with `/addevent`.",
             inline=False,
         )
-        embed.set_footer(text=_append_vote_footer(style["footer_prefix"] + "No upcoming events."))
+        embed.set_footer(text=_append_vote_footer("No upcoming events."))
         return embed
 
-    # ---- If the next upcoming event has a banner, show it ----
+    # Banner (first event with a banner wins)
     for ev, _dt in upcoming:
         banner = ev.get("banner_url")
         if isinstance(banner, str) and banner.strip():
             embed.set_image(url=banner.strip())
             break
 
-    shown = 0
+    def _meta_line(ev: dict) -> str:
+        tags = []
 
-    for ev, dt in upcoming:
-        if shown >= MAX_EMBED_EVENTS:
+        # repeat
+        repeat_every = ev.get("repeat_every_days")
+        if isinstance(repeat_every, int) and repeat_every > 0:
+            if theme == "hypebeast":
+                tags.append(f"🔁 {repeat_every}d cycle")
+            elif theme == "spooky":
+                tags.append(f"🔁 it returns every {repeat_every}d")
+            else:
+                tags.append(f"🔁 every {repeat_every}d")
+
+        # silenced
+        if bool(ev.get("silenced", False)):
+            if theme == "cutesy":
+                tags.append("🤫 quiet mode")
+            elif theme == "spooky":
+                tags.append("🔕 silenced (the void waits)")
+            else:
+                tags.append("🔕 silenced")
+
+        # owner + creator (non-pinging)
+        owner = ev.get("owner_name")
+        creator = ev.get("created_by_name") or ev.get("owner_name")
+        if isinstance(owner, str) and owner.strip():
+            if theme == "hypebeast":
+                tags.append(f"👑 {owner.strip()}")
+            else:
+                tags.append(f"👤 {owner.strip()}")
+        if isinstance(creator, str) and creator.strip():
+            if theme == "arcade":
+                tags.append(f"🧾 {creator.strip()}")
+            else:
+                tags.append(f"📝 {creator.strip()}")
+
+        return " • ".join(tags)
+
+    def _event_value(ev: dict, dt: datetime) -> str:
+        ts = int(ev["timestamp"])
+        rel = f"<t:{ts}:R>"
+        full = f"<t:{ts}:F>"
+        meta = _meta_line(ev)
+        meta_line = f"\n{meta}" if meta else ""
+
+        if theme == "arcade":
+            return f"🟪🟦 **INSERT COIN** 🟦🟪\n⏱️ **{rel}**\n📅 {full}{meta_line}"
+        if theme == "hypebeast":
+            return f"💎 **NEXT DROP:** **{rel}**\n🗓️ {full}{meta_line}"
+        if theme == "cutesy":
+            return f"✨ **Happens** {rel}\n📅 {full}\n🍓 stay cute, stay on time{meta_line}"
+        if theme == "celebration":
+            return f"🎊 **Countdown:** **{rel}**\n📅 {full}{meta_line}"
+        if theme == "spooky":
+            return f"🕯️ **The hour approaches:** **{rel}**\n📜 {full}{meta_line}"
+        if theme == "gaming":
+            return f"🏁 **Queue pop:** **{rel}**\n🗓️ {full}{meta_line}"
+
+        # default fallback
+        return f"⏳ **{rel}**\n🗓️ {full}{meta_line}"
+
+    # Minimalist mode: one clean list in the description area
+    if profile.get("mode") == "list":
+        lines = []
+        for ev, dt in upcoming:
+            ts = int(ev["timestamp"])
+            rel = f"<t:{ts}:R>"
+            full = f"<t:{ts}:F>"
+            meta = _meta_line(ev)
+            meta_txt = f" • {meta}" if meta else ""
+            name = (ev.get("name", "Event") or "Event").strip()
+            lines.append(f"• **{name}** — {rel}\n  {full}{meta_txt}")
+
+        # Keep room for footer; don’t blow the 4096 description limit
+        body = "\n".join(lines)
+        if len(body) > 3600:
+            body = body[:3600].rsplit("\n", 1)[0] + "\n… (more events: use /listevents)"
+
+        embed.description = profile["description"] + "\n\n" + body
+        embed.set_footer(text=_append_vote_footer("Use /listevents for the full list."))
+        return embed
+
+    # Fields mode: spotlight “Next Up” + then per-event fields
+    next_ev, next_dt = upcoming[0]
+    next_name = (next_ev.get("name", "Event") or "Event")[:256]
+
+    spotlight_name = {
+        "gaming": "🎯 NEXT QUEST",
+        "arcade": "⭐ NEXT ROUND",
+        "hypebeast": "🔥 NEXT DROP",
+        "cutesy": "🌸 NEXT LITTLE THING",
+        "celebration": "🥂 NEXT UP",
+        "spooky": "🦇 NEXT OMEN",
+        "default": "⭐ NEXT UP",
+    }.get(theme, "⭐ NEXT UP")
+
+    embed.add_field(
+        name=spotlight_name,
+        value=f"**{next_name}**\n{_event_value(next_ev, next_dt)}",
+        inline=False,
+    )
+
+    shown = 0
+    max_events_to_show = MAX_EMBED_EVENTS - 1  # reserve 1 for spotlight
+
+    for ev, dt in upcoming[1:]:
+        if shown >= max_events_to_show:
             break
 
-        desc, _, _passed = compute_time_left(dt)  # passed should be False here
-        date_str = dt.strftime("%B %d, %Y at %I:%M %p %Z")
-
-        silenced = bool(ev.get("silenced", False))
-        silenced_note = " 🔕 (silenced)" if silenced else ""
-
-        if theme == "dramatic":
-            value = f"**{date_str}**\n🕯️ **{desc}** until it begins{silenced_note}"
-        elif theme == "neon":
-            value = f"**{date_str}**\n⚡ **{desc}** remaining{silenced_note}"
-        else:
-            value = f"**{date_str}**\n⏱ **{desc}** remaining{silenced_note}"
-
-        creator_line = format_created_by_inline(ev)
-        if creator_line:
-            value = f"{value}\n{creator_line}"
+        name = (ev.get("name", "Event") or "Event").strip()
+        # Theme-flavored field name prefix
+        prefix = ""
+        if theme == "arcade":
+            prefix = "🟩 "
+        elif theme == "hypebeast":
+            prefix = "🔺 "
+        elif theme == "cutesy":
+            prefix = "🎀 "
+        elif theme == "celebration":
+            prefix = "🎈 "
+        elif theme == "spooky":
+            prefix = "🕸️ "
+        elif theme == "gaming":
+            prefix = "🎮 "
 
         embed.add_field(
-            name=(ev.get("name", "Event") or "Event")[:256],
-            value=value[:1024],
+            name=(prefix + name)[:256],
+            value=_event_value(ev, dt)[:1024],
             inline=False,
         )
         shown += 1
 
     total_upcoming = len(upcoming)
-    if total_upcoming > shown:
-        footer = f"Showing {shown} of {total_upcoming} upcoming events. Use /listevents to view all."
-        embed.set_footer(text=_append_vote_footer(style["footer_prefix"] + footer))
+    if total_upcoming > (shown + 1):
+        footer = f"Showing {shown+1} of {total_upcoming} upcoming events. Use /listevents to view all."
     else:
-        embed.set_footer(text=_append_vote_footer(style["footer_prefix"] + "Updated."))
+        footer = "Updated."
 
+    embed.set_footer(text=_append_vote_footer(footer))
     return embed
+
 
 
 async def rebuild_pinned_message(guild_id: int, channel: discord.TextChannel, guild_state: dict):
@@ -3267,16 +3396,42 @@ async def resendsetup(interaction: discord.Interaction):
         "📨 Setup instructions have been resent to the server owner (or a fallback channel)."
     )
 
-# ---- THEME AUTOCOMPLETE (place ABOVE the /theme command) ----
+# ---- THEMES (new set) ----
 
-THEMES = ["default", "neon", "minimal", "dramatic"]
+THEMES = [
+    "default",
+    "gaming",
+    "arcade",
+    "hypebeast",
+    "minimalist",
+    "cutesy",
+    "celebration",
+    "spooky",
+]
+
+# Back-compat: map your older theme names to the new vibe set
+THEME_ALIASES = {
+    "neon": "arcade",
+    "dramatic": "spooky",
+    "minimal": "minimalist",
+}
 
 _THEME_LABELS = {
-    "default": "Default — ChronoBot Purple",
-    "neon": "Neon — Glow Mode ✨",
-    "minimal": "Minimal — Clean & Quiet",
-    "dramatic": "Dramatic — The Clock Is Hungry ⏳",
+    "default": "Default — Chrono Purple (classic)",
+    "gaming": "Gaming — Party Queue 🎮",
+    "arcade": "Arcade — Insert Coin 🕹️",
+    "hypebeast": "Hypebeast — Next Drop 💎",
+    "minimalist": "Minimalist — Clean & Quiet ▫️",
+    "cutesy": "Cutesy — Sweet & Soft 🧸",
+    "celebration": "Celebration — Confetti Mode 🎉",
+    "spooky": "Spooky — Haunted Clock 🕯️",
 }
+
+def normalize_theme_key(raw: str) -> str:
+    t = (raw or "").strip().lower()
+    if t in THEME_ALIASES:
+        t = THEME_ALIASES[t]
+    return t if t in THEMES else "default"
 
 async def theme_autocomplete(
     interaction: discord.Interaction,
@@ -3287,13 +3442,12 @@ async def theme_autocomplete(
     out: List[app_commands.Choice[str]] = []
     for t in THEMES:
         label = _THEME_LABELS.get(t, t)
-        # match either the key or the label text
         if cur and (cur not in t and cur not in label.lower()):
             continue
-
         out.append(app_commands.Choice(name=label[:100], value=t))
 
     return out[:25]
+
 
 
 @bot.tree.command(name="theme", description="Set the pinned countdown theme (Supporter perk).")
@@ -3321,7 +3475,8 @@ async def theme_cmd(interaction: discord.Interaction, theme: str):
             m = difflib.get_close_matches(t, THEMES, n=1, cutoff=0.6)
             if m:
                 t = m[0]
-
+    t = normalize_theme_key(t)
+    
     if t not in THEMES:
         await interaction.response.send_message(
             f"Unknown theme. Options: {', '.join(THEMES)}",
