@@ -2795,7 +2795,34 @@ async def resendsetup(interaction: discord.Interaction):
         "📨 Setup instructions have been resent to the server owner (or a fallback channel)."
     )
 
+# ---- THEME AUTOCOMPLETE (place ABOVE the /theme command) ----
+
 THEMES = ["default", "neon", "minimal", "dramatic"]
+
+_THEME_LABELS = {
+    "default": "Default — ChronoBot Purple",
+    "neon": "Neon — Glow Mode ✨",
+    "minimal": "Minimal — Clean & Quiet",
+    "dramatic": "Dramatic — The Clock Is Hungry ⏳",
+}
+
+async def theme_autocomplete(
+    interaction: discord.Interaction,
+    current: str,
+) -> List[app_commands.Choice[str]]:
+    cur = (current or "").strip().lower()
+
+    out: List[app_commands.Choice[str]] = []
+    for t in THEMES:
+        label = _THEME_LABELS.get(t, t)
+        # match either the key or the label text
+        if cur and (cur not in t and cur not in label.lower()):
+            continue
+
+        out.append(app_commands.Choice(name=label[:100], value=t))
+
+    return out[:25]
+
 
 @bot.tree.command(name="theme", description="Set the pinned countdown theme (Supporter perk).")
 @app_commands.describe(theme="Theme name")
