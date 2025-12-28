@@ -2437,7 +2437,7 @@ bot.tree.add_command(milestones_group)
 @require_vote("/milestones advanced")
 @app_commands.checks.has_permissions(manage_guild=True)
 @app_commands.guild_only()
-async def milestones_advanced_cmd(interaction: discord.Interaction, milestones: str, apply_to_all: bool = False):
+async def milestones_advanced_cmd(interaction: discord.Interaction, milestones: str, apply_to_all: bool = True):
     guild = interaction.guild
     assert guild is not None
 
