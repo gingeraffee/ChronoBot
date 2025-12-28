@@ -1455,6 +1455,8 @@ def build_milestone_mention(channel: discord.TextChannel, guild_state: dict) -> 
     if role_id:
         role = channel.guild.get_role(int(role_id))
         if role:
+            if getattr(role, "is_default", lambda: False)():
+                return "", discord.AllowedMentions.none()                
             return f"{role.mention} ", discord.AllowedMentions(roles=True)
     return "", discord.AllowedMentions.none()
 
@@ -2952,6 +2954,15 @@ async def cleareventowner(interaction: discord.Interaction, index: int):
 @app_commands.checks.has_permissions(manage_guild=True)
 @app_commands.guild_only()
 async def setmentionrole(interaction: discord.Interaction, role: discord.Role):
+    # ✅ Prevent the special @everyone role (it causes "@@everyone" escaping)
+    if role.is_default():  # @everyone role
+        await interaction.response.send_message(
+            "⚠️ You can’t set **@everyone** as the mention role.\n"
+            "If you want @everyone pings, give Chromie the **Mention Everyone** permission instead.",
+            ephemeral=True,
+        )
+        return
+
     guild = interaction.guild
     assert guild is not None
     g = get_guild_state(guild.id)
@@ -2963,7 +2974,6 @@ async def setmentionrole(interaction: discord.Interaction, role: discord.Role):
         f"✅ Milestone reminders will now mention {role.mention}.",
         ephemeral=True,
     )
-
 
 @bot.tree.command(name="clearmentionrole", description="Stop role mentions on milestone posts.")
 @app_commands.checks.has_permissions(manage_guild=True)
