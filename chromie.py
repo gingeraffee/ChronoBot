@@ -90,7 +90,7 @@ TOPGG_API_V1_BASE = "https://top.gg/api/v1"
 
 TOPGG_API_BASE = "https://top.gg/api"
 
-async def topgg_has_voted(user_id: int) -> bool:
+async def topgg_has_voted(user_id: int, *, force: bool = False) -> bool:
     now = time.monotonic()
     cached = _vote_cache.get(user_id)
     if cached and (now - cached[0] <= VOTE_CACHE_TTL_SECONDS):
