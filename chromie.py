@@ -1765,6 +1765,27 @@ async def vote_cmd(interaction: discord.Interaction):
         view=build_vote_view(),
     )
 
+@bot.tree.command(name="vote_debug", description="Debug Top.gg vote verification (admin).")
+@app_commands.checks.has_permissions(manage_guild=True)
+@app_commands.guild_only()
+async def vote_debug_cmd(interaction: discord.Interaction):
+    # bypass cache so you see reality right now
+    _vote_cache.pop(interaction.user.id, None)
+    voted = await topgg_has_voted(interaction.user.id, force=True)
+
+    cfg = "✅" if (TOPGG_TOKEN and TOPGG_BOT_ID) else "❌"
+    await interaction.response.send_message(
+        "🔎 **Top.gg Vote Debug**\n"
+        f"Configured (token + bot id): {cfg}\n"
+        f"Bot ID set to: `{TOPGG_BOT_ID or 'MISSING'}`\n"
+        f"Vote active (last 12h): {'✅' if voted else '❌'}\n\n"
+        "If this shows ❌ but you *just* voted, it’s usually one of:\n"
+        "• vote is older than 12 hours\n"
+        "• you voted a different bot (dev vs prod ID mismatch)\n"
+        "• token is wrong/expired (look for HTTP 401/403 in logs)\n",
+        ephemeral=True,
+    )
+
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.MissingPermissions):
