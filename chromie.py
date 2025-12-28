@@ -380,8 +380,12 @@ def parse_milestones(text: str) -> Optional[List[int]]:
     return out
 
 
+# How long to keep events after they start (so start blast doesn’t delete them immediately)
+EVENT_START_GRACE_SECONDS = 60 * 60  # 1 hour
+STARTED_EVENT_KEEP_SECONDS = EVENT_START_GRACE_SECONDS  # or set to 10*60 for 10 minutes
+
 def prune_past_events(guild_state: dict, now: Optional[datetime] = None) -> int:
-    """Delete events whose timestamp has passed (dt <= now) after start blast/grace rules. Returns # removed."""
+    """Delete events whose timestamp has passed, but keep 'just started' events for a short window."""
     if now is None:
         now = datetime.now(DEFAULT_TZ)
 
@@ -408,16 +412,14 @@ def prune_past_events(guild_state: dict, now: Optional[datetime] = None) -> int:
 
         if dt <= now:
             age = (now - dt).total_seconds()
-            start_announced = bool(ev.get("start_announced", False))
 
-            # Remove if we already did the "started" blast,
-            # OR if it's so old it's outside the grace window.
-            if start_announced or age > EVENT_START_GRACE_SECONDS:
-                removed += 1
-            else:
+            # ✅ Keep it for a while after start (regardless of start_announced)
+            # This prevents “start blast -> immediate prune” in the same cycle.
+            if age <= STARTED_EVENT_KEEP_SECONDS:
                 kept.append(ev)
+            else:
+                removed += 1
         else:
-            # ✅ THIS is the missing piece: keep future events
             kept.append(ev)
 
     if removed:
@@ -425,7 +427,6 @@ def prune_past_events(guild_state: dict, now: Optional[datetime] = None) -> int:
         sort_events(guild_state)
 
     return removed
-
 
 
 # ==========================
@@ -1144,33 +1145,80 @@ def build_embed_for_guild(guild_state: dict) -> discord.Embed:
             break
 
     def _meta_line(ev: dict) -> str:
-        tags = []
+        parts = []
 
         repeat_every = ev.get("repeat_every_days")
         if isinstance(repeat_every, int) and repeat_every > 0:
-            if theme == "hypebeast":
-                tags.append(f"🔁 {repeat_every}d cycle")
-            elif theme == "spooky":
-                tags.append(f"🔁 it returns every {repeat_every}d")
-            else:
-                tags.append(f"🔁 every {repeat_every}d")
+            parts.append(f"Repeat: every {repeat_every}d")
 
         if bool(ev.get("silenced", False)):
-            if theme == "cutesy":
-                tags.append("🤫 quiet mode")
-            elif theme == "spooky":
-                tags.append("🔕 silenced (the void waits)")
-            else:
-                tags.append("🔕 silenced")
+            parts.append("Silenced")
 
         owner = ev.get("owner_name")
-        creator = ev.get("created_by_name") or ev.get("owner_name")
         if isinstance(owner, str) and owner.strip():
-            tags.append(f"👑 {owner.strip()}" if theme == "hypebeast" else f"👤 {owner.strip()}")
-        if isinstance(creator, str) and creator.strip():
-            tags.append(f"🧾 {creator.strip()}" if theme == "arcade" else f"📝 {creator.strip()}")
+            parts.append(f"Owner: {owner.strip()}")
 
-        return " • ".join(tags)
+        creator = ev.get("created_by_name") or ev.get("owner_name")
+        if isinstance(creator, str) and creator.strip():
+            parts.append(f"Created by: {creator.strip()}")
+
+        return " • ".join(parts)
+
+    _NAME_EMOJI = {
+        "default": "⭐",
+        "gaming": "🎮",
+        "arcade": "🕹️",
+        "hypebeast": "💎",
+        "minimalist": "",     # minimalist stays clean
+        "cutesy": "🧸",
+        "celebration": "🎉",
+        "spooky": "🕯️",
+    }
+
+    _DETAIL_LABEL = {
+        "default": "Starts",
+        "gaming": "Queue pops",
+        "arcade": "Starts",
+        "hypebeast": "Drops",
+        "minimalist": "Starts",
+        "cutesy": "Happens",
+        "celebration": "Starts",
+        "spooky": "Approaches",
+    }
+
+    def _event_field_name(ev_name: str) -> str:
+        name = (ev_name or "Event").strip()
+        if len(name) > 180:
+            name = name[:179] + "…"
+
+        if theme == "hypebeast":
+            name = name.upper()
+
+        emoji = _NAME_EMOJI.get(theme, "⭐")
+        # ✅ Emoji ONLY on the event name line, and underline makes it “pop”
+        if emoji:
+            return f"{emoji} **__{name}__**"
+        return f"**__{name}__**"
+
+    def _event_field_value(ev: dict, dt: datetime) -> str:
+        ts = int(ev["timestamp"])
+        rel = f"<t:{ts}:R>"
+        full = f"<t:{ts}:F>"
+        label = _DETAIL_LABEL.get(theme, "Starts")
+        meta = _meta_line(ev)
+
+        out = (
+            f"{label} {rel}\n"
+            f"On {full}"
+        )
+
+        if meta:
+            out += f"\n\n_{meta}_"
+
+        # ✅ Adds extra spacing so fields feel less cramped
+        out += "\n\u200b"
+        return out
+
 
     def _event_value(ev: dict, dt: datetime) -> str:
         ts = int(ev["timestamp"])
@@ -1264,8 +1312,8 @@ def build_embed_for_guild(guild_state: dict) -> discord.Embed:
     # ✅ Put the EVENT NAME in the FIELD TITLE for emphasis
     spotlight_title = f"{spotlight_label} — {next_name}"
     embed.add_field(
-        name=spotlight_title[:256],
-        value=_event_value(next_ev, next_dt)[:1024],
+        name=_event_field_name(next_name)[:256],
+        value=f"__{spotlight_label}__\n\n{_event_field_value(next_ev, next_dt)}",
         inline=False,
     )
 
@@ -1278,23 +1326,9 @@ def build_embed_for_guild(guild_state: dict) -> discord.Embed:
 
         name = (ev.get("name", "Event") or "Event").strip()
 
-        prefix = ""
-        if theme == "arcade":
-            prefix = "🟩 "
-        elif theme == "hypebeast":
-            prefix = "🔺 "
-        elif theme == "cutesy":
-            prefix = "🎀 "
-        elif theme == "celebration":
-            prefix = "🎈 "
-        elif theme == "spooky":
-            prefix = "🕸️ "
-        elif theme == "gaming":
-            prefix = "🎮 "
-
         embed.add_field(
-            name=(prefix + name)[:256],
-            value=_event_value(ev, dt)[:1024],
+            name=_event_field_name(name)[:256],
+            value=_event_field_value(ev, dt)[:1024],
             inline=False,
         )
         shown += 1
@@ -1514,15 +1548,21 @@ async def get_or_create_pinned_message(
     return msg
 
 
-async def get_text_channel(channel_id: int) -> Optional[discord.TextChannel]:
-    ch = bot.get_channel(channel_id)
+async def get_text_channel(channel_id) -> Optional[discord.TextChannel]:
+    try:
+        cid = int(channel_id)
+    except (TypeError, ValueError):
+        return None
+
+    ch = bot.get_channel(cid)
     if isinstance(ch, discord.TextChannel):
         return ch
     try:
-        ch = await bot.fetch_channel(channel_id)
+        ch = await bot.fetch_channel(cid)
         return ch if isinstance(ch, discord.TextChannel) else None
     except Exception:
         return None
+
         
 def format_created_by_inline(ev: dict) -> str:
     name = ev.get("created_by_name")
@@ -1646,13 +1686,6 @@ async def refresh_countdown_message(guild: discord.Guild, guild_state: dict) -> 
         )
     except discord.HTTPException as e:
         print(f"[Guild {guild.id}] Failed to edit pinned message: {e}")
-
-
-    try:
-        await pinned.edit(embed=build_embed_for_guild(guild_state))
-    except Exception:
-        pass
-
 
 # ==========================
 # AUTOCOMPLETE HELPERS
@@ -1788,7 +1821,20 @@ async def update_countdowns():
             if bot_member is None:
                 continue
 
+            # ----------------------------
+            # ✅ Dirty flag + flush helpers
+            # ----------------------------
             state_changed = False
+
+            def mark_dirty():
+                nonlocal state_changed
+                state_changed = True
+
+            def flush_if_dirty():
+                nonlocal state_changed
+                if state_changed:
+                    save_state()
+                    state_changed = False
 
             # ---- EVENT CHECKS (start blast + milestones + repeats) ----
             today = _today_local_date()
@@ -1825,9 +1871,14 @@ async def update_countdowns():
 
                             try:
                                 await channel.send(text, allowed_mentions=allowed)
+
+                                # mutate state
                                 ev["start_announced"] = True
-                                save_state()
-                                state_changed = True
+                                mark_dirty()
+
+                                # ✅ optional but recommended: flush immediately after a public send
+                                flush_if_dirty()
+
                             except discord.Forbidden:
                                 missing = missing_channel_perms(channel, channel.guild)
                                 await notify_owner_missing_perms(
@@ -1841,7 +1892,7 @@ async def update_countdowns():
 
                     continue  # don’t do milestones/repeats for started/past events
 
-                # ---- Milestones + repeating reminders (your existing logic) ----
+                # ---- Milestones + repeating reminders ----
                 desc, _, passed = compute_time_left(dt)
                 if passed:
                     continue
@@ -1857,6 +1908,7 @@ async def update_countdowns():
                 if not isinstance(announced, list):
                     announced = []
                     ev["announced_milestones"] = announced
+                    mark_dirty()  # you changed the event dict
 
                 if days_left in milestones and days_left not in announced:
                     mention_prefix, allowed_mentions = build_milestone_mention(channel, guild_state)
@@ -1873,11 +1925,16 @@ async def update_countdowns():
 
                     try:
                         await channel.send(text, allowed_mentions=allowed_mentions)
+
+                        # mutate state
                         announced.append(days_left)
                         ev["announced_milestones"] = announced
-                        save_state()
-                        state_changed = True
                         milestone_sent_today = True
+                        mark_dirty()
+
+                        # ✅ optional: flush immediately after a public send
+                        flush_if_dirty()
+
                     except discord.Forbidden:
                         missing = missing_channel_perms(channel, channel.guild)
                         await notify_owner_missing_perms(
@@ -1906,6 +1963,7 @@ async def update_countdowns():
                     except ValueError:
                         anchor = today
                         ev["repeat_anchor_date"] = anchor.isoformat()
+                        mark_dirty()
 
                     days_since_anchor = (today - anchor).days
                     if days_since_anchor > 0 and (days_since_anchor % repeat_every == 0):
@@ -1913,6 +1971,7 @@ async def update_countdowns():
                         if not isinstance(sent_dates, list):
                             sent_dates = []
                             ev["announced_repeat_dates"] = sent_dates
+                            mark_dirty()
 
                         if today.isoformat() not in sent_dates and not milestone_sent_today:
                             try:
@@ -1921,10 +1980,15 @@ async def update_countdowns():
                                     f"🔁 Reminder: **{ev.get('name', 'Event')}** is in **{desc}** (on **{date_str}**).",
                                     allowed_mentions=discord.AllowedMentions.none(),
                                 )
+
+                                # mutate state
                                 sent_dates.append(today.isoformat())
                                 ev["announced_repeat_dates"] = sent_dates[-180:]
-                                save_state()
-                                state_changed = True
+                                mark_dirty()
+
+                                # ✅ optional: flush immediately after a public send
+                                flush_if_dirty()
+
                             except discord.Forbidden:
                                 missing = missing_channel_perms(channel, channel.guild)
                                 await notify_owner_missing_perms(
@@ -1949,8 +2013,8 @@ async def update_countdowns():
             # ---- Prune after processing (so start blast can happen) ----
             removed = prune_past_events(guild_state, now=datetime.now(DEFAULT_TZ))
             if removed:
-                save_state()
-                state_changed = True
+                mark_dirty()
+                # (No immediate flush needed; no public post happened.)
 
             # ---- Update pinned embed once at end (reflects changes) ----
             pinned = await get_or_create_pinned_message(guild_id, channel, allow_create=True)
@@ -1958,11 +2022,11 @@ async def update_countdowns():
                 try:
                     await pinned.edit(embed=build_embed_for_guild(guild_state))
                 except discord.NotFound:
-                    # Message was deleted; clear stored id so next loop can recover/recreate cleanly
                     gs = get_guild_state(guild_id)
                     if gs.get("pinned_message_id") == pinned.id:
                         gs["pinned_message_id"] = None
-                        save_state()
+                        mark_dirty()
+                        flush_if_dirty()  # this one is worth flushing quickly
                 except discord.Forbidden:
                     missing = missing_channel_perms(channel, channel.guild)
                     await notify_owner_missing_perms(
@@ -1974,6 +2038,8 @@ async def update_countdowns():
                 except discord.HTTPException as e:
                     print(f"[Guild {guild_id}] Failed to edit pinned message: {e}")
 
+            # ✅ Final flush: saves prune/anchor fixes/etc once per guild cycle
+            flush_if_dirty()
 
         except Exception as e:
             print(f"[Guild {gid_str}] update_countdowns crashed for this guild: {type(e).__name__}: {e}")
@@ -3453,9 +3519,16 @@ _THEME_LABELS = {
 
 def normalize_theme_key(raw: str) -> str:
     t = (raw or "").strip().lower()
-    if t in THEME_ALIASES:
-        t = THEME_ALIASES[t]
-    return t if t in THEMES else "default"
+    aliases = {
+        "minimal": "minimalist",
+        "min": "minimalist",
+        "cute": "cutesy",
+        "celebrate": "celebration",
+        "party": "celebration",
+        "spook": "spooky",
+    }
+    return aliases.get(t, t)
+
 
 async def theme_autocomplete(
     interaction: discord.Interaction,
