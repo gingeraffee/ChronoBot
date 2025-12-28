@@ -110,7 +110,7 @@ async def topgg_has_voted(user_id: int) -> bool:
                     voted = True if TOPGG_FAIL_OPEN else False
                 else:
                     data = await resp.json()
-                    voted = bool(data.get("voted") == 1)
+                    voted = str(data.get("voted") == 1)
     except Exception:
         voted = True if TOPGG_FAIL_OPEN else False
 
@@ -141,7 +141,7 @@ def require_vote(feature_label: str):
         raise VoteRequired()
 
     return app_commands.check(predicate)
-
+    
 # ==========================
 # STATE HANDLING
 # ==========================
@@ -252,6 +252,15 @@ def save_state():
 
         except Exception as e:
             print(f"[STATE] save_state failed: {type(e).__name__}: {e}")
+
+# ==========================
+# STATE INIT (must exist globally)
+# ==========================
+
+state = load_state()
+for _, g_state in state.get("guilds", {}).items():
+    sort_events(g_state)
+save_state()
 
 
 def get_guild_state(guild_id: int) -> dict:
@@ -2947,7 +2956,7 @@ async def theme_cmd(interaction: discord.Interaction, theme: str):
 async def chronohelp(interaction: discord.Interaction):
     text = (
         "**ChronoBot – Setup & Commands**\n\n"
-        "All slash command responses are ephemeral (only you see them).\n\n"
+        "*Most* slash command responses are ephemeral (only you see them).\n\n"
         "**Tip:** Use `/listevents` to see event numbers for any command that needs `index:` "
         "(or just start typing and pick from the autocomplete list).\n\n"
         "**Setup**\n"
