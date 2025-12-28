@@ -701,42 +701,36 @@ async def send_onboarding_for_guild(guild: discord.Guild):
 
     setup_message = (
         f"Hey {mention}! Thanks for inviting **ChronoBot** to **{guild.name}** 🕒✨\n\n"
-        "I’m **Chromie** — your server’s confident little timekeeper. I pin a clean countdown list and I nudge people at the right moments. "
-        "It’s like a calendar… but with better vibes.\n\n"
-        f"⏳ **Default milestones:** {milestone_str} days before the event (including **0** for day-of).\n\n"
-
-        "**⚡ Quick start (two commands, instant order):**\n"
+        "I’m **Chromie** — your server’s confident little timekeeper. I pin a clean countdown list and post reminders so nobody has to do the mental math (or the panic).\n\n"
+        "**⚡ Quick start (30 seconds):**\n"
         "1) In your events channel: `/seteventchannel`\n"
-        "2) Add your first event: `/addevent date: 04/12/2026 time: 09:00 name: Game Night 🎲`\n\n"
-
-        "**🧰 Handy commands:**\n"
-        "• `/editevent` – tweak name/date/time without re-adding\n"
-        "• `/remindall` – ping the channel about the next (or chosen) event\n"
-        "• `/dupeevent` – clone an event (perfect for yearly stuff)\n"
-        "• `/seteventowner` – assign an owner and I’ll DM them for milestones + repeat reminders\n"
-        "• `/setrepeat index: <number> every_days: <days>` – repeating reminders every X days\n"
-        "   - Daily example: `/setrepeat index: 1 every_days: 1`\n"
-        "   - Weekly example: `/setrepeat index: 1 every_days: 7`\n"
-        "• `/clearrepeat index: <number>` – turn repeating reminders off\n\n"
-
-        "**💜 Supporter perks (unlocked by voting on Top.gg):**\n"
-        "Voting doesn’t cost anything — it’s just a quick click that helps Chromie stay discoverable.\n"
-        "When you vote, you unlock a few *quality-of-life power tools*:\n\n"
-        "• `/theme` — change the look of the pinned countdown embed.\n"
-        "  Useful if you want a bold “NEON” vibe, a calm minimal list, or a dramatic style for hype events.\n\n"
-        "• `/milestones advanced` — set server-wide default milestone days.\n"
-        "  Great if your server likes earlier reminders (ex: 90/60/30) or only wants the “final week” pings.\n\n"
-        "• `/template save` + `/template load` — save an event’s settings and reuse them.\n"
-        "  Perfect for recurring formats like meetings, streams, releases, staff deadlines — without retyping settings every time.\n\n"
-        "• `/banner set` — attach a banner image to an event so the pinned embed looks polished.\n"
-        "  Ideal for big launches, tournaments, birthdays, server anniversaries, etc.\n\n"
-        "• `/digest enable` — weekly Monday digest of upcoming events (next 7 days).\n"
-        "  Helps members who missed pings catch up, and gives staff a quick “what’s coming” snapshot.\n\n"
-        "To vote anytime: `/vote`\n\n"
-
-        "Need the full menu? Type `/chronohelp` and I’ll hand you the whole spellbook.\n\n"
+        "2) Add an event: `/addevent date: 04/12/2026 time: 09:00 name: Game Night 🎲`\n\n"
+        "**🧭 Everyday commands:**\n"
+        "• `/listevents` (shows event numbers + autocomplete)\n"
+        "• `/eventinfo index:` (details)\n"
+        "• `/editevent` • `/dupeevent` • `/removeevent`\n"
+        "• `/remindall` (manual reminder)\n"
+        "• `/silence` (pause reminders without deleting)\n"
+        "• `/setrepeat index: every_days:` + `/clearrepeat` (daily/weekly repeats)\n"
+        "• `/seteventowner` (owner gets milestone + repeat DMs)\n\n"
+        "**🔔 Reminders & mentions:**\n"
+        f"Chromie posts milestone pings ({milestone_str} by default) in your event channel, timezone-aware (America/Chicago).\n"
+        "Want pings? Use `/setmentionrole` to mention a role on milestone posts (or clear it with `/clearmentionrole`).\n"
+        "Most command replies are private (ephemeral), but reminders are posted publicly in the event channel.\n\n"
+        "**🛠️ If something looks off:** run `/healthcheck` — it shows the configured channel + whether I can view/send/embed/read history/pin.\n"
+        "(Past events auto-remove after they pass, so the list stays tidy.)\n\n"
+        "**💜 Supporter perks (free vote unlocks):**\n"
+        "Run `/vote` to get the link + check your status. Voting on Top.gg unlocks:\n"
+        "• `/theme` (style the pinned countdown)\n"
+        "• `/milestones advanced` (server-wide defaults)\n"
+        "• `/template save` + `/template load` (reusable setups)\n"
+        "• `/banner set` (event banner images)\n"
+        "• `/digest enable` (weekly “next 7 days” recap)\n\n"
+        "Need the full spellbook? `/chronohelp`\n"
+        f"FAQ: {FAQ_URL}\n"
+        f"Support server: {SUPPORT_SERVER_URL}\n\n"
         "Alright — I’ll be over here, politely bullying time into behaving. 💜"
-    )
+)
 
 
     sent = False
@@ -1056,7 +1050,7 @@ def build_embed_for_guild(guild_state: dict) -> discord.Embed:
             "footer_prefix": "",
         },
         "neon": {
-            "title": "✨ NEON COUNTDOWNS ✨",
+            "title": "✨ CURRENT COUNTDOWNS ✨",
             "description": "High voltage timekeeping. Handle with sunglasses.",
             "color": discord.Color.from_rgb(57, 255, 20),  # neon green
             "footer_prefix": "⚡ ",
@@ -1065,10 +1059,10 @@ def build_embed_for_guild(guild_state: dict) -> discord.Embed:
             "title": "Event Countdowns",
             "description": "Upcoming events.",
             "color": discord.Color.from_rgb(180, 180, 180),  # soft gray
-            "footer_prefix": "• ",
+            "footer_prefix": "",
         },
         "dramatic": {
-            "title": "⏳ THE CLOCK IS HUNGRY ⏳",
+            "title": "⏳ THE CLOCK NEVER STOPS ⏳",
             "description": "Time is happening to all of us.",
             "color": discord.Color.from_rgb(190, 30, 45),  # dramatic red
             "footer_prefix": "🩸 ",
