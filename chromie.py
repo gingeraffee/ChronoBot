@@ -11,7 +11,7 @@ from discord import app_commands
 from threading import Lock
 import random
 import aiohttp
-
+import difflib
 # ==========================
 # CONFIG
 # ==========================
@@ -2799,6 +2799,7 @@ THEMES = ["default", "neon", "minimal", "dramatic"]
 
 @bot.tree.command(name="theme", description="Set the pinned countdown theme (Supporter perk).")
 @app_commands.describe(theme="Theme name")
+@app_commands.autocomplete(theme=theme_autocomplete)  # ✅ adds autocomplete
 @require_vote("/theme")
 @app_commands.checks.has_permissions(manage_guild=True)
 @app_commands.guild_only()
@@ -2806,7 +2807,22 @@ async def theme_cmd(interaction: discord.Interaction, theme: str):
     guild = interaction.guild
     assert guild is not None
 
-    t = (theme or "").strip().lower()
+    raw = (theme or "").strip().lower()
+
+    # ✅ Fuzzy “autocorrect”: allow partials + close matches
+    t = raw
+    if t not in THEMES:
+        # try startswith/contains first
+        t2 = next((x for x in THEMES if x.startswith(t)), None) if t else None
+        if not t2 and t:
+            t2 = next((x for x in THEMES if t in x), None)
+        if t2:
+            t = t2
+        else:
+            m = difflib.get_close_matches(t, THEMES, n=1, cutoff=0.6)
+            if m:
+                t = m[0]
+
     if t not in THEMES:
         await interaction.response.send_message(
             f"Unknown theme. Options: {', '.join(THEMES)}",
@@ -2815,19 +2831,18 @@ async def theme_cmd(interaction: discord.Interaction, theme: str):
         return
 
     g = get_guild_state(guild.id)
-    guild_state = g
     g["theme"] = t
     save_state()
 
     # Refresh pinned embed (if configured)
     ch_id = g.get("event_channel_id")
-    guild_state = g
     if ch_id:
         ch = await get_text_channel(int(ch_id))
         if ch:
-            await refresh_countdown_message(guild, guild_state)
+            await refresh_countdown_message(guild, g)
 
     await interaction.response.send_message(f"✅ Theme set to **{t}**.", ephemeral=True)
+
 
 
 @bot.tree.command(name="chronohelp", description="Show ChronoBot setup & command help.")
