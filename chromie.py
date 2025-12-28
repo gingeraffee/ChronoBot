@@ -363,7 +363,7 @@ def parse_milestones(text: str) -> Optional[List[int]]:
 
 
 def prune_past_events(guild_state: dict, now: Optional[datetime] = None) -> int:
-    """Delete events whose timestamp has passed (dt <= now). Returns # removed."""
+    """Delete events whose timestamp has passed (dt <= now) after start blast/grace rules. Returns # removed."""
     if now is None:
         now = datetime.now(DEFAULT_TZ)
 
@@ -381,6 +381,7 @@ def prune_past_events(guild_state: dict, now: Optional[datetime] = None) -> int:
         if not isinstance(ts, int):
             kept.append(ev)
             continue
+
         try:
             dt = datetime.fromtimestamp(ts, tz=DEFAULT_TZ)
         except Exception:
@@ -397,6 +398,9 @@ def prune_past_events(guild_state: dict, now: Optional[datetime] = None) -> int:
                 removed += 1
             else:
                 kept.append(ev)
+        else:
+            # ✅ THIS is the missing piece: keep future events
+            kept.append(ev)
 
     if removed:
         guild_state["events"] = kept
@@ -404,39 +408,6 @@ def prune_past_events(guild_state: dict, now: Optional[datetime] = None) -> int:
 
     return removed
 
-state = load_state()
-
-# Backfill new fields for older saved guilds/events + prune past events on boot
-_boot_now = datetime.now(DEFAULT_TZ)
-for _, g_state in state.get("guilds", {}).items():
-    sort_events(g_state)
-    g_state.setdefault("mention_role_id", None)
-    g_state.setdefault("event_channel_set_by", None)
-    g_state.setdefault("event_channel_set_at", None)
-    g_state.setdefault("theme", "default")
-    g_state.setdefault("default_milestones", DEFAULT_MILESTONES.copy())
-    g_state.setdefault("templates", {})
-    g_state.setdefault("digest", {"enabled": False, "channel_id": None, "last_sent_date": None})
-
-
-    for ev in g_state.get("events", []):
-        ev.setdefault("milestones", DEFAULT_MILESTONES.copy())
-        ev.setdefault("announced_milestones", [])
-        ev.setdefault("repeat_every_days", None)
-        ev.setdefault("repeat_anchor_date", None)
-        ev.setdefault("announced_repeat_dates", [])
-        ev.setdefault("silenced", False)
-        ev.setdefault("owner_user_id", None)
-        ev.setdefault("start_announced", False)
-        ev.setdefault("banner_url", None)
-
-    removed = prune_past_events(g_state, now=_boot_now)
-    if removed:
-        # optional log
-        # print(f"[STATE] Pruned {removed} past event(s) on startup.")
-        pass
-
-save_state()
 
 
 # ==========================
@@ -912,25 +883,50 @@ def build_embed_for_guild(guild_state: dict) -> discord.Embed:
     sort_events(guild_state)
     events = guild_state.get("events", [])
 
+    theme = (guild_state.get("theme") or "default").lower()
+
+    # Theme "skins" — these are what make it feel premium/different.
+    THEME_STYLES = {
+        "default": {
+            "title": "Upcoming Event Countdowns",
+            "description": "Live countdowns for this server’s events.",
+            "color": EMBED_COLOR,
+            "footer_prefix": "",
+        },
+        "neon": {
+            "title": "✨ NEON COUNTDOWNS ✨",
+            "description": "High voltage timekeeping. Handle with sunglasses.",
+            "color": discord.Color.from_rgb(57, 255, 20),  # neon green
+            "footer_prefix": "⚡ ",
+        },
+        "minimal": {
+            "title": "Event Countdowns",
+            "description": "Upcoming events.",
+            "color": discord.Color.from_rgb(180, 180, 180),  # soft gray
+            "footer_prefix": "• ",
+        },
+        "dramatic": {
+            "title": "⏳ THE CLOCK IS HUNGRY ⏳",
+            "description": "Time is happening to all of us.",
+            "color": discord.Color.from_rgb(190, 30, 45),  # dramatic red
+            "footer_prefix": "🩸 ",
+        },
+    }
+
+    style = THEME_STYLES.get(theme, THEME_STYLES["default"])
+
     embed = discord.Embed(
-        title="Upcoming Event Countdowns",
-        description="Live countdowns for this server’s events.",
-        color=EMBED_COLOR,
+        title=style["title"],
+        description=style["description"],
+        color=style["color"],
     )
 
-    theme = (guild_state.get("theme") or "default").lower()
-    if theme == "neon":
-        embed.title = "✨ Upcoming Event Countdowns ✨"
-    elif theme == "minimal":
-        embed.title = "Event Countdowns"
-        embed.description = "Upcoming events."
-    elif theme == "dramatic":
-        embed.title = "⏳ THE CLOCK IS HUNGRY ⏳"
-        embed.description = "Time is happening to all of us."
+    # Optional polish: add a timestamp so it feels “live”
+    embed.timestamp = datetime.now(DEFAULT_TZ)
 
     if not events:
         embed.add_field(name="No events yet", value="Use `/addevent` to add one.", inline=False)
-        embed.set_footer(text=_append_vote_footer(None))
+        embed.set_footer(text=_append_vote_footer(style["footer_prefix"] + "No events to display."))
         return embed
 
     # If the next upcoming event has a banner, show it as the embed image
@@ -967,19 +963,31 @@ def build_embed_for_guild(guild_state: dict) -> discord.Embed:
             value = f"**{date_str}**\n➡️ Event has started or passed. 🎉"
         else:
             any_upcoming = True
-            value = f"**{date_str}**\n⏱ **{desc}** remaining{silenced_note}"
+            # Tiny per-theme flavor in the value line:
+            if theme == "dramatic":
+                value = f"**{date_str}**\n🕯️ **{desc}** until it begins{silenced_note}"
+            elif theme == "neon":
+                value = f"**{date_str}**\n⚡ **{desc}** remaining{silenced_note}"
+            else:
+                value = f"**{date_str}**\n⏱ **{desc}** remaining{silenced_note}"
 
-        embed.add_field(name=ev.get("name", "Event")[:256], value=value[:1024], inline=False)
+        embed.add_field(
+            name=ev.get("name", "Event")[:256],
+            value=value[:1024],
+            inline=False,
+        )
         shown += 1
 
     if len(events) > shown:
-        embed.set_footer(text=_append_vote_footer(f"Showing {shown} of {len(events)} events. Use /listevents to view all."))
+        footer = f"Showing {shown} of {len(events)} events. Use /listevents to view all."
+        embed.set_footer(text=_append_vote_footer(style["footer_prefix"] + footer))
     elif not any_upcoming:
-        embed.set_footer(text=_append_vote_footer("All listed events have already started or passed."))
+        embed.set_footer(text=_append_vote_footer(style["footer_prefix"] + "All listed events have already started or passed."))
     else:
-        embed.set_footer(text=_append_vote_footer(None))
+        embed.set_footer(text=_append_vote_footer(style["footer_prefix"] + "Updated."))
 
     return embed
+
 
 async def rebuild_pinned_message(guild_id: int, channel: discord.TextChannel, guild_state: dict):
     sort_events(guild_state)
@@ -1138,6 +1146,52 @@ async def get_text_channel(channel_id: int) -> Optional[discord.TextChannel]:
     except Exception:
         return None
 
+def format_owner_inline(ev: dict) -> str:
+    """
+    Non-pinging owner label for lists/embeds.
+    Uses cached owner_name when available.
+    """
+    owner_name = ev.get("owner_name")
+    if isinstance(owner_name, str) and owner_name.strip():
+        return f"👤 Owner: {owner_name.strip()}"
+    return ""
+
+
+async def ensure_owner_name_cached(guild: discord.Guild, ev: dict) -> bool:
+    """
+    Populate ev['owner_name'] once (only if missing) using guild member display name.
+    Returns True if the event dict was updated.
+    """
+    owner_id = ev.get("owner_user_id")
+    if not isinstance(owner_id, int) or owner_id <= 0:
+        # keep it clean if owner removed
+        if ev.get("owner_name") is not None:
+            ev["owner_name"] = None
+            return True
+        return False
+
+    existing = ev.get("owner_name")
+    if isinstance(existing, str) and existing.strip():
+        return False  # already cached
+
+    member = guild.get_member(owner_id)
+    if member is None:
+        try:
+            member = await guild.fetch_member(owner_id)
+        except Exception:
+            member = None
+
+    if member is not None:
+        ev["owner_name"] = member.display_name
+        return True
+
+    # Last-ditch: user object (no nickname, but better than nothing)
+    try:
+        u = await bot.fetch_user(owner_id)
+        ev["owner_name"] = getattr(u, "name", None)
+        return True
+    except Exception:
+        return False
 
 async def dm_owner_if_set(guild: discord.Guild, ev: dict, message: str):
     owner_id = ev.get("owner_user_id")
@@ -1563,6 +1617,7 @@ def format_events_list(guild_state: dict) -> str:
         ts = ev.get("timestamp")
         if not isinstance(ts, int):
             continue
+
         dt = datetime.fromtimestamp(ts, tz=DEFAULT_TZ)
         desc, _, passed = compute_time_left(dt)
         status = "✅ done" if passed else "⏳ active"
@@ -1575,11 +1630,18 @@ def format_events_list(guild_state: dict) -> str:
         silenced = ev.get("silenced", False)
         silenced_note = " 🔕 silenced" if silenced and not passed else ""
 
+        owner_note = ""
+        ol = "" if passed else format_owner_inline(ev)
+        if ol:
+            owner_note = f" • {ol}"
+
         lines.append(
             f"**{idx}. {ev.get('name', 'Event')}** — {dt.strftime('%m/%d/%Y %H:%M')} "
-            f"({desc}) [{status}]{repeat_note}{silenced_note}"
+            f"({desc}) [{status}]{repeat_note}{silenced_note}{owner_note}"
         )
+
     return "\n".join(lines)
+
 
 @bot.tree.command(name="seteventchannel", description="Set this channel as the event countdown channel.")
 @app_commands.default_permissions(manage_guild=True)  # ✅ hides command from non-manage-server users
@@ -1817,6 +1879,7 @@ async def addevent(interaction: discord.Interaction, date: str, time: str, name:
         "owner_user_id": None,
         "start_announced": False,
         "banner_url": None,
+        "owner_name": None,
     }
 
     guild_state["events"].append(event)
@@ -2065,6 +2128,7 @@ async def dupeevent(interaction: discord.Interaction, index: int, date: str, tim
         "owner_user_id": ev.get("owner_user_id"),
         "start_announced": False,
         "banner_url": ev.get("banner_url"),
+        "owner_name": ev.get("owner_name"),
     }
 
     g["events"].append(new_ev)
@@ -2326,6 +2390,7 @@ async def template_load_cmd(interaction: discord.Interaction, name: str, date: s
         "owner_user_id": None,
         "start_announced": False,
         "banner_url": None,
+        "owner_name": None,
     }
 
     g["events"].append(new_ev)
@@ -2453,6 +2518,11 @@ async def seteventowner(interaction: discord.Interaction, index: int, user: disc
         return
 
     ev["owner_user_id"] = int(user.id)
+
+    # Cache a non-pinging display name for embeds/lists
+    member = guild.get_member(user.id)
+    ev["owner_name"] = member.display_name if member else user.name
+
     save_state()
 
     await interaction.response.send_message(
@@ -2477,6 +2547,7 @@ async def cleareventowner(interaction: discord.Interaction, index: int):
         return
 
     ev["owner_user_id"] = None
+    ev["owner_name"] = None
     save_state()
 
     await interaction.response.send_message(
