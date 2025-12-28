@@ -37,7 +37,7 @@ _STATE_LOCK = Lock()
 
 TOPGG_TOKEN = os.getenv("TOPGG_TOKEN", "").strip()
 TOPGG_BOT_ID = os.getenv("TOPGG_BOT_ID", "").strip()
-TOPGG_FAIL_OPEN = True  # if top.gg is down/misconfigured, don't brick premium commands
+TOPGG_FAIL_OPEN = False 
     
 def log_throttled(guild_id: int, code: str, msg: str):
     key = (guild_id, code)
@@ -113,7 +113,7 @@ async def topgg_has_voted(user_id: int) -> bool:
                     voted = True if TOPGG_FAIL_OPEN else False
                 else:
                     data = await resp.json()
-                    voted = str(data.get("voted") == 1)
+                    voted = bool(int(data.get("voted", 0)))
     except Exception:
         voted = True if TOPGG_FAIL_OPEN else False
 
@@ -1035,10 +1035,8 @@ def chunk_text(text: str, limit: int = 1900) -> list[str]:
 def build_embed_for_guild(guild_state: dict) -> discord.Embed:
     sort_events(guild_state)
     events = guild_state.get("events", [])
-
     theme = (guild_state.get("theme") or "default").lower()
 
-    # Theme "skins" — these are what make it feel premium/different.
     THEME_STYLES = {
         "default": {
             "title": "Upcoming Event Countdowns",
@@ -1049,19 +1047,19 @@ def build_embed_for_guild(guild_state: dict) -> discord.Embed:
         "neon": {
             "title": "✨ CURRENT COUNTDOWNS ✨",
             "description": "High voltage timekeeping. Handle with sunglasses.",
-            "color": discord.Color.from_rgb(57, 255, 20),  # neon green
+            "color": discord.Color.from_rgb(57, 255, 20),
             "footer_prefix": "⚡ ",
         },
         "minimal": {
             "title": "Event Countdowns",
             "description": "Upcoming events.",
-            "color": discord.Color.from_rgb(180, 180, 180),  # soft gray
+            "color": discord.Color.from_rgb(180, 180, 180),
             "footer_prefix": "",
         },
         "dramatic": {
             "title": "⏳ THE CLOCK NEVER STOPS ⏳",
             "description": "Time is happening to all of us.",
-            "color": discord.Color.from_rgb(190, 30, 45),  # dramatic red
+            "color": discord.Color.from_rgb(190, 30, 45),
             "footer_prefix": "🩸 ",
         },
     }
@@ -1073,69 +1071,79 @@ def build_embed_for_guild(guild_state: dict) -> discord.Embed:
         description=style["description"],
         color=style["color"],
     )
-
-    # Optional polish: add a timestamp so it feels “live”
     embed.timestamp = datetime.now(DEFAULT_TZ)
 
-    if not events:
-        embed.add_field(name="No events yet", value="Use `/addevent` to add one.", inline=False)
+    if not isinstance(events, list) or not events:
+        embed.add_field(name="No upcoming events", value="Use `/addevent` to add one.", inline=False)
         embed.set_footer(text=_append_vote_footer(style["footer_prefix"] + "No events to display."))
         return embed
 
-    # If the next upcoming event has a banner, show it as the embed image
     now_dt = datetime.now(DEFAULT_TZ)
+
+    # ---- Build a clean list of UPCOMING events only ----
+    upcoming: list[tuple[dict, datetime]] = []
     for ev in events:
-        ts = ev.get("timestamp")
-        if isinstance(ts, int):
-            dt = datetime.fromtimestamp(ts, tz=DEFAULT_TZ)
-            if dt > now_dt:
-                banner = ev.get("banner_url")
-                if isinstance(banner, str) and banner.strip():
-                    embed.set_image(url=banner.strip())
-                break
-
-    shown = 0
-    any_upcoming = False
-
-    for ev in events:
-        if shown >= MAX_EMBED_EVENTS:
-            break
-
         ts = ev.get("timestamp")
         if not isinstance(ts, int):
             continue
+        try:
+            dt = datetime.fromtimestamp(ts, tz=DEFAULT_TZ)
+        except Exception:
+            continue
+        if dt <= now_dt:
+            continue
+        upcoming.append((ev, dt))
 
-        dt = datetime.fromtimestamp(ts, tz=DEFAULT_TZ)
-        desc, _, passed = compute_time_left(dt)
+    if not upcoming:
+        embed.add_field(
+            name="No upcoming events",
+            value="Everything on the list has already started or passed. Add a new one with `/addevent`.",
+            inline=False,
+        )
+        embed.set_footer(text=_append_vote_footer(style["footer_prefix"] + "No upcoming events."))
+        return embed
+
+    # ---- If the next upcoming event has a banner, show it ----
+    for ev, _dt in upcoming:
+        banner = ev.get("banner_url")
+        if isinstance(banner, str) and banner.strip():
+            embed.set_image(url=banner.strip())
+            break
+
+    shown = 0
+
+    for ev, dt in upcoming:
+        if shown >= MAX_EMBED_EVENTS:
+            break
+
+        desc, _, _passed = compute_time_left(dt)  # passed should be False here
         date_str = dt.strftime("%B %d, %Y at %I:%M %p %Z")
 
-        silenced = ev.get("silenced", False)
-        silenced_note = " 🔕 (silenced)" if silenced and not passed else ""
+        silenced = bool(ev.get("silenced", False))
+        silenced_note = " 🔕 (silenced)" if silenced else ""
 
-        if passed:
-            value = f"**{date_str}**\n➡️ Event has started or passed. 🎉"
+        if theme == "dramatic":
+            value = f"**{date_str}**\n🕯️ **{desc}** until it begins{silenced_note}"
+        elif theme == "neon":
+            value = f"**{date_str}**\n⚡ **{desc}** remaining{silenced_note}"
         else:
-            any_upcoming = True
-            # Tiny per-theme flavor in the value line:
-            if theme == "dramatic":
-                value = f"**{date_str}**\n🕯️ **{desc}** until it begins{silenced_note}"
-            elif theme == "neon":
-                value = f"**{date_str}**\n⚡ **{desc}** remaining{silenced_note}"
-            else:
-                value = f"**{date_str}**\n⏱ **{desc}** remaining{silenced_note}"
+            value = f"**{date_str}**\n⏱ **{desc}** remaining{silenced_note}"
+
+        creator_line = format_created_by_inline(ev)
+        if creator_line:
+            value = f"{value}\n{creator_line}"
 
         embed.add_field(
-            name=ev.get("name", "Event")[:256],
+            name=(ev.get("name", "Event") or "Event")[:256],
             value=value[:1024],
             inline=False,
         )
         shown += 1
 
-    if len(events) > shown:
-        footer = f"Showing {shown} of {len(events)} events. Use /listevents to view all."
+    total_upcoming = len(upcoming)
+    if total_upcoming > shown:
+        footer = f"Showing {shown} of {total_upcoming} upcoming events. Use /listevents to view all."
         embed.set_footer(text=_append_vote_footer(style["footer_prefix"] + footer))
-    elif not any_upcoming:
-        embed.set_footer(text=_append_vote_footer(style["footer_prefix"] + "All listed events have already started or passed."))
     else:
         embed.set_footer(text=_append_vote_footer(style["footer_prefix"] + "Updated."))
 
@@ -1298,6 +1306,16 @@ async def get_text_channel(channel_id: int) -> Optional[discord.TextChannel]:
         return ch if isinstance(ch, discord.TextChannel) else None
     except Exception:
         return None
+        
+def format_created_by_inline(ev: dict) -> str:
+    name = ev.get("created_by_name")
+    if isinstance(name, str) and name.strip():
+        return f"📝 Created by: {name.strip()}"
+    # Back-compat fallback (older events)
+    name2 = ev.get("owner_name")
+    if isinstance(name2, str) and name2.strip():
+        return f"📝 Created by: {name2.strip()}"
+    return ""
 
 def format_owner_inline(ev: dict) -> str:
     """
@@ -1938,7 +1956,7 @@ async def digest_disable_cmd(interaction: discord.Interaction):
     name="Name of the event",
 )
 async def addevent(interaction: discord.Interaction, date: str, time: str, name: str):
-    await interaction.response.defer(ephemeral=True)    
+    await interaction.response.defer(ephemeral=True)
     user = interaction.user
 
     if interaction.guild is not None:
@@ -1956,8 +1974,8 @@ async def addevent(interaction: discord.Interaction, date: str, time: str, name:
 
         perms = getattr(member, "guild_permissions", None)
         if not perms or not (perms.manage_guild or perms.administrator):
-            await interaction.edit_original_response(content=
-                "You need the **Manage Server** or **Administrator** permission to add events in this server."
+            await interaction.edit_original_response(
+                content="You need the **Manage Server** or **Administrator** permission to add events in this server."
             )
             return
 
@@ -1968,15 +1986,15 @@ async def addevent(interaction: discord.Interaction, date: str, time: str, name:
         user_links = get_user_links()
         linked_guild_id = user_links.get(str(user.id))
         if not linked_guild_id:
-            await interaction.edit_original_response(content=
-                "I don't know which server to use for your DMs yet.\nIn the server you want to control, run `/linkserver`, then DM me `/addevent` again."
+            await interaction.edit_original_response(
+                content="I don't know which server to use for your DMs yet.\nIn the server you want to control, run `/linkserver`, then DM me `/addevent` again."
             )
             return
 
         guild = bot.get_guild(linked_guild_id)
         if not guild:
-            await interaction.edit_original_response(content=
-                "I can't find the linked server anymore. Maybe I was removed from it?\nRe-add me and run `/linkserver` again."
+            await interaction.edit_original_response(
+                content="I can't find the linked server anymore. Maybe I was removed from it?\nRe-add me and run `/linkserver` again."
             )
             return
 
@@ -1989,8 +2007,8 @@ async def addevent(interaction: discord.Interaction, date: str, time: str, name:
 
         perms = getattr(member, "guild_permissions", None)
         if not perms or not (perms.manage_guild or perms.administrator):
-            await interaction.edit_original_response(content=
-                "You no longer have **Manage Server** (or **Administrator**) in the linked server, so I can’t add events via DM."
+            await interaction.edit_original_response(
+                content="You no longer have **Manage Server** (or **Administrator**) in the linked server, so I can’t add events via DM."
             )
             return
 
@@ -2007,18 +2025,21 @@ async def addevent(interaction: discord.Interaction, date: str, time: str, name:
     try:
         dt = datetime.strptime(f"{date} {time}", "%m/%d/%Y %H:%M")
     except ValueError:
-        await interaction.edit_original_response(content=
-            "I couldn't understand that date/time.\nUse: `date: 04/12/2026` `time: 09:00` (MM/DD/YYYY + 24-hour HH:MM)."
+        await interaction.edit_original_response(
+            content="I couldn't understand that date/time.\nUse: `date: 04/12/2026` `time: 09:00` (MM/DD/YYYY + 24-hour HH:MM)."
         )
         return
 
     dt = dt.replace(tzinfo=DEFAULT_TZ)
 
     if dt <= datetime.now(DEFAULT_TZ):
-        await interaction.edit_original_response(content=
-            "That date/time is in the past. Please choose a future time."
+        await interaction.edit_original_response(
+            content="That date/time is in the past. Please choose a future time."
         )
         return
+
+    # display name for creator/owner (use the resolved member you already fetched)
+    creator_display = getattr(member, "display_name", None) or interaction.user.name
 
     event = {
         "name": name,
@@ -2029,10 +2050,15 @@ async def addevent(interaction: discord.Interaction, date: str, time: str, name:
         "repeat_anchor_date": None,
         "announced_repeat_dates": [],
         "silenced": False,
-        "owner_user_id": None,
+
+        "created_by_user_id": int(user.id),
+        "created_by_name": creator_display,
+
+        "owner_user_id": int(user.id),
+        "owner_name": creator_display,
+
         "start_announced": False,
         "banner_url": None,
-        "owner_name": None,
     }
 
     guild_state["events"].append(event)
@@ -2045,10 +2071,11 @@ async def addevent(interaction: discord.Interaction, date: str, time: str, name:
         if channel is not None:
             await refresh_countdown_message(guild, guild_state)
 
-    await interaction.edit_original_response(content=
-        f"✅ Added event **{name}** on {dt.strftime('%B %d, %Y at %I:%M %p %Z')} in server **{guild.name}**."
+    await interaction.edit_original_response(
+        content=f"✅ Added event **{name}** on {dt.strftime('%B %d, %Y at %I:%M %p %Z')} in server **{guild.name}**."
     )
     await maybe_vote_nudge(interaction, "Event scheduled! If Chromie’s been useful, a Top.gg vote helps a ton.")
+
 
 
 @bot.tree.command(name="listevents", description="List all events for this server.")
@@ -2057,7 +2084,13 @@ async def listevents(interaction: discord.Interaction):
     guild = interaction.guild
     assert guild is not None
     guild_state = get_guild_state(guild.id)
-    await interaction.response.send_message(format_events_list(guild_state), ephemeral=True)
+
+    text = format_events_list(guild_state)
+    chunks = chunk_text(text, limit=1900)
+
+    await interaction.response.send_message(chunks[0], ephemeral=True)
+    for chunk in chunks[1:]:
+        await interaction.followup.send(chunk, ephemeral=True)
 
 
 @bot.tree.command(name="nextevent", description="Show the next upcoming event.")
@@ -2115,17 +2148,23 @@ async def eventinfo(interaction: discord.Interaction, index: int):
     silenced = ev.get("silenced", False)
     owner_id = ev.get("owner_user_id")
     owner_note = f"<@{owner_id}>" if owner_id else "none"
+    creator_name = ev.get("created_by_name") or ev.get("owner_name") or "unknown"
+    creator_id = ev.get("created_by_user_id") or ev.get("owner_user_id")
+    creator_note = f"{creator_name}" + (f" (ID: {creator_id})" if creator_id else "")
 
     await interaction.response.send_message(
         f"**Event #{index}: {ev['name']}**\n"
         f"🗓️ {dt.strftime('%B %d, %Y at %I:%M %p %Z')}\n"
         f"⏱️ {desc} remaining\n"
+        f"📝 Created by: {creator_note}\n"
+        f"👤 Owner (DM): {owner_note}\n"
         f"🔔 Milestones: {miles}\n"
         f"🔁 Repeat: {repeat_note}\n"
-        f"🔕 Silenced: {'yes' if silenced and not passed else 'no'}\n"
-        f"👤 Owner (DM): {owner_note}",
+        f"🔕 Silenced: {'yes' if silenced and not passed else 'no'}",
         ephemeral=True,
+        allowed_mentions=discord.AllowedMentions.none(),
     )
+
 
 
 @bot.tree.command(name="removeevent", description="Remove an event by its list number (from /listevents).")
@@ -2207,7 +2246,9 @@ async def editevent(interaction: discord.Interaction, index: int, name: Optional
             return
 
         if dt <= datetime.now(DEFAULT_TZ):
-            await interaction.edit_original_response(content="That date/time is in the past. Please choose a future time.")
+            await interaction.edit_original_response(content=
+                "That date/time is in the past. Please choose a future time."
+            )
             return
 
         ev["timestamp"] = int(dt.timestamp())
@@ -2269,6 +2310,10 @@ async def dupeevent(interaction: discord.Interaction, index: int, date: str, tim
         await interaction.edit_original_response(content="That date/time is in the past. Please choose a future time.")
         return
 
+    maker = guild.get_member(interaction.user.id)
+    maker_name = maker.display_name if maker else interaction.user.name
+
+
     new_ev = {
         "name": use_name,
         "timestamp": int(dt.timestamp()),
@@ -2278,10 +2323,13 @@ async def dupeevent(interaction: discord.Interaction, index: int, date: str, tim
         "repeat_anchor_date": None,
         "announced_repeat_dates": [],
         "silenced": ev.get("silenced", False),
-        "owner_user_id": ev.get("owner_user_id"),
         "start_announced": False,
         "banner_url": ev.get("banner_url"),
-        "owner_name": ev.get("owner_name"),
+        "created_by_user_id": int(interaction.user.id),
+        "created_by_name": maker_name,
+        "owner_user_id": int(interaction.user.id),
+        "owner_name": maker_name,
+
     }
 
     g["events"].append(new_ev)
@@ -2564,6 +2612,9 @@ async def template_load_cmd(interaction: discord.Interaction, name: str, date: s
         await interaction.response.send_message("That date/time is in the past. Choose a future time.", ephemeral=True)
         return
 
+    maker = guild.get_member(interaction.user.id)
+    maker_name = maker.display_name if maker else interaction.user.name
+
     new_ev = {
         "name": event_name,
         "timestamp": int(dt.timestamp()),
@@ -2573,10 +2624,12 @@ async def template_load_cmd(interaction: discord.Interaction, name: str, date: s
         "repeat_anchor_date": None,
         "announced_repeat_dates": [],
         "silenced": bool(tpl.get("silenced", False)),
-        "owner_user_id": None,
         "start_announced": False,
         "banner_url": None,
-        "owner_name": None,
+        "created_by_user_id": int(interaction.user.id),
+        "created_by_name": maker_name,
+        "owner_user_id": int(interaction.user.id),
+        "owner_name": maker_name,
     }
 
     g["events"].append(new_ev)
