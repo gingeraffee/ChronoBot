@@ -12,6 +12,7 @@ from threading import Lock
 import random
 import aiohttp
 import difflib
+from discord.errors import NotFound as DiscordNotFound, Forbidden as DiscordForbidden, HTTPException
 # ==========================
 # CONFIG
 # ==========================
@@ -1200,7 +1201,6 @@ async def rebuild_pinned_message(guild_id: int, channel: discord.TextChannel, gu
     save_state()
     return msg
 
-
 async def get_or_create_pinned_message(
     guild_id: int,
     channel: discord.TextChannel,
@@ -1217,11 +1217,12 @@ async def get_or_create_pinned_message(
             channel.guild,
             channel,
             missing=list(RECOMMENDED_CHANNEL_PERMS),
-            action="resolve bot permissions to update the countdown",
+            action="update the countdown message",
         )
         return None
 
     perms = channel.permissions_for(bot_member)
+
     if not perms.view_channel or not perms.send_messages:
         missing = missing_channel_perms(channel, channel.guild)
         await notify_owner_missing_perms(
@@ -1246,6 +1247,9 @@ async def get_or_create_pinned_message(
                 action="pin + display the countdown embed",
             )
 
+    # =========================
+    # 1) Use saved pinned ID if we have it
+    # =========================
     if pinned_id:
         if not perms.read_message_history:
             missing = missing_channel_perms(channel, channel.guild)
@@ -1277,6 +1281,47 @@ async def get_or_create_pinned_message(
         except discord.HTTPException:
             return None
 
+    # =========================
+    # ✅ NEW: Recovery — reuse an existing bot-authored pinned message in this channel
+    # This prevents “pin spam” when pinned_message_id gets lost/reset.
+    # =========================
+    if not pinned_id:
+        if not perms.read_message_history:
+            # If we can’t read history, we can’t list pins to recover.
+            if allow_create:
+                missing = missing_channel_perms(channel, channel.guild)
+                await notify_owner_missing_perms(
+                    channel.guild,
+                    channel,
+                    missing=missing,
+                    action="read message history to find and reuse the existing pinned countdown message",
+                )
+            return None if not allow_create else None  # fall through is pointless without history
+        try:
+            pins = await channel.pins()
+            # Prefer the most recent pinned message authored by the bot
+            for m in pins:
+                if m.author and m.author.id == bot_member.id:
+                    guild_state["pinned_message_id"] = m.id
+                    save_state()
+                    await ensure_countdown_pinned(channel.guild, channel, m, perms=perms)
+                    return m
+        except discord.Forbidden:
+            missing = missing_channel_perms(channel, channel.guild)
+            await notify_owner_missing_perms(
+                channel.guild,
+                channel,
+                missing=missing,
+                action="access pinned messages to reuse the existing countdown pin",
+            )
+            return None
+        except discord.HTTPException:
+            # transient; let the loop try again later
+            return None
+
+    # =========================
+    # 2) Create only if we truly have nothing to reuse
+    # =========================
     if not allow_create:
         return None
 
@@ -1284,6 +1329,21 @@ async def get_or_create_pinned_message(
     try:
         msg = await channel.send(embed=embed)
         await ensure_countdown_pinned(channel.guild, channel, msg, perms=perms)
+
+        # ✅ NEW (optional but helpful): if you have Manage Messages,
+        # unpin older bot pins so only one remains.
+        if perms.manage_messages and perms.read_message_history:
+            try:
+                pins = await channel.pins()
+                for m in pins:
+                    if m.id != msg.id and m.author and m.author.id == bot_member.id:
+                        try:
+                            await m.unpin(reason="Cleaning up older ChronoBot pins")
+                        except (discord.Forbidden, discord.HTTPException):
+                            pass
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+
     except discord.Forbidden:
         missing = missing_channel_perms(channel, channel.guild)
         await notify_owner_missing_perms(
@@ -1299,7 +1359,6 @@ async def get_or_create_pinned_message(
     guild_state["pinned_message_id"] = msg.id
     save_state()
     return msg
-
 
 
 async def get_text_channel(channel_id: int) -> Optional[discord.TextChannel]:
@@ -1406,6 +1465,7 @@ async def refresh_countdown_message(guild: discord.Guild, guild_state: dict) -> 
     ch_id = guild_state.get("event_channel_id")
     if not ch_id:
         return
+
     channel = await get_text_channel(int(ch_id))
     if channel is None:
         return
@@ -1413,6 +1473,25 @@ async def refresh_countdown_message(guild: discord.Guild, guild_state: dict) -> 
     pinned = await get_or_create_pinned_message(guild.id, channel, allow_create=True)
     if pinned is None:
         return
+
+    try:
+        await pinned.edit(embed=build_embed_for_guild(guild_state))
+    except discord.NotFound:
+        gs = get_guild_state(guild.id)
+        if gs.get("pinned_message_id") == pinned.id:
+            gs["pinned_message_id"] = None
+            save_state()
+    except discord.Forbidden:
+        missing = missing_channel_perms(channel, channel.guild)
+        await notify_owner_missing_perms(
+            channel.guild,
+            channel,
+            missing=missing,
+            action="edit/update the pinned countdown message",
+        )
+    except discord.HTTPException as e:
+        print(f"[Guild {guild.id}] Failed to edit pinned message: {e}")
+
 
     try:
         await pinned.edit(embed=build_embed_for_guild(guild_state))
@@ -1723,6 +1802,12 @@ async def update_countdowns():
             if pinned is not None:
                 try:
                     await pinned.edit(embed=build_embed_for_guild(guild_state))
+                except discord.NotFound:
+                    # Message was deleted; clear stored id so next loop can recover/recreate cleanly
+                    gs = get_guild_state(guild_id)
+                    if gs.get("pinned_message_id") == pinned.id:
+                        gs["pinned_message_id"] = None
+                        save_state()
                 except discord.Forbidden:
                     missing = missing_channel_perms(channel, channel.guild)
                     await notify_owner_missing_perms(
@@ -1733,6 +1818,7 @@ async def update_countdowns():
                     )
                 except discord.HTTPException as e:
                     print(f"[Guild {guild_id}] Failed to edit pinned message: {e}")
+
 
         except Exception as e:
             print(f"[Guild {gid_str}] update_countdowns crashed for this guild: {type(e).__name__}: {e}")
