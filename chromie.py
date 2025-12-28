@@ -701,21 +701,40 @@ async def send_onboarding_for_guild(guild: discord.Guild):
         "I’m **Chromie** — your server’s confident little timekeeper. I pin a clean countdown list and I nudge people at the right moments. "
         "It’s like a calendar… but with better vibes.\n\n"
         f"⏳ **Default milestones:** {milestone_str} days before the event (including **0** for day-of).\n\n"
+
         "**⚡ Quick start (two commands, instant order):**\n"
         "1) In your events channel: `/seteventchannel`\n"
         "2) Add your first event: `/addevent date: 04/12/2026 time: 09:00 name: Game Night 🎲`\n\n"
+
         "**🧰 Handy commands:**\n"
         "• `/editevent` – tweak name/date/time without re-adding\n"
         "• `/remindall` – ping the channel about the next (or chosen) event\n"
         "• `/dupeevent` – clone an event (perfect for yearly stuff)\n"
-        "• `/seteventowner` – assign an owner and I’ll DM them at reminders\n"
+        "• `/seteventowner` – assign an owner and I’ll DM them for milestones + repeat reminders\n"
         "• `/setrepeat index: <number> every_days: <days>` – repeating reminders every X days\n"
         "   - Daily example: `/setrepeat index: 1 every_days: 1`\n"
         "   - Weekly example: `/setrepeat index: 1 every_days: 7`\n"
         "• `/clearrepeat index: <number>` – turn repeating reminders off\n\n"
+
+        "**💜 Supporter perks (unlocked by voting on Top.gg):**\n"
+        "Voting doesn’t cost anything — it’s just a quick click that helps Chromie stay discoverable.\n"
+        "When you vote, you unlock a few *quality-of-life power tools*:\n\n"
+        "• `/theme` — change the look of the pinned countdown embed.\n"
+        "  Useful if you want a bold “NEON” vibe, a calm minimal list, or a dramatic style for hype events.\n\n"
+        "• `/milestones advanced` — set server-wide default milestone days.\n"
+        "  Great if your server likes earlier reminders (ex: 90/60/30) or only wants the “final week” pings.\n\n"
+        "• `/template save` + `/template load` — save an event’s settings and reuse them.\n"
+        "  Perfect for recurring formats like meetings, streams, releases, staff deadlines — without retyping settings every time.\n\n"
+        "• `/banner set` — attach a banner image to an event so the pinned embed looks polished.\n"
+        "  Ideal for big launches, tournaments, birthdays, server anniversaries, etc.\n\n"
+        "• `/digest enable` — weekly Monday digest of upcoming events (next 7 days).\n"
+        "  Helps members who missed pings catch up, and gives staff a quick “what’s coming” snapshot.\n\n"
+        "To vote anytime: `/vote`\n\n"
+
         "Need the full menu? Type `/chronohelp` and I’ll hand you the whole spellbook.\n\n"
         "Alright — I’ll be over here, politely bullying time into behaving. 💜"
     )
+
 
     sent = False
     if contact_user:
@@ -2956,23 +2975,29 @@ async def theme_cmd(interaction: discord.Interaction, theme: str):
 async def chronohelp(interaction: discord.Interaction):
     text = (
         "**ChronoBot – Setup & Commands**\n\n"
-        "*Most* slash command responses are ephemeral (only you see them).\n\n"
+        "Most slash command responses are ephemeral (only you see them).\n"
+        "Milestone/repeat reminders post in the configured event channel.\n\n"
         "**Tip:** Use `/listevents` to see event numbers for any command that needs `index:` "
         "(or just start typing and pick from the autocomplete list).\n\n"
+
         "**Setup**\n"
         "• `/seteventchannel` – pick the channel where the pinned countdown lives\n"
         "• `/addevent` – add an event (MM/DD/YYYY + 24-hour HH:MM)\n\n"
+
         "**Browse**\n"
         "• `/listevents` – list events\n"
         "• `/nextevent` – show the next upcoming event\n"
         "• `/eventinfo index:` – details for one event\n\n"
+
         "**Edit & organize**\n"
         "• `/editevent index:` – edit name/date/time\n"
         "• `/dupeevent index: date:` – duplicate an event (optional time/name)\n"
         "• `/removeevent index:` – delete an event\n\n"
+
         "**Repeating reminders (every X days)**\n"
         "• `/setrepeat index: every_days:` – turn on repeating reminders (1 = daily, 7 = weekly)\n"
         "• `/clearrepeat index:` – turn repeating reminders off\n\n"
+
         "**Milestones & notifications**\n"
         "• `/remindall` – send a notification to the channel about an event\n"
         "• `/setmilestones index: milestones:` – set custom milestone days\n"
@@ -2982,6 +3007,18 @@ async def chronohelp(interaction: discord.Interaction):
         "• `/cleareventowner index:` – remove the owner\n"
         "• `/setmentionrole role:` – @mention a role on milestone posts\n"
         "• `/clearmentionrole` – stop role mentions\n\n"
+
+        "**Supporter perks (vote unlocks)**\n"
+        "Vote doesn’t cost anything — it helps Chromie grow and unlocks extra tools:\n"
+        "• `/theme` – change the look of the pinned countdown (neon/minimal/dramatic styles)\n"
+        "• `/milestones advanced` – set server-wide default milestone days (and optionally apply to all events)\n"
+        "• `/template save` – save an event’s settings as a reusable template\n"
+        "• `/template load` – create a new event from a template (fast setup for repeating formats)\n"
+        "• `/banner set` – add an image banner for an event (the next upcoming event’s banner displays in the pinned embed)\n"
+        "• `/digest enable` – weekly Monday digest of events in the next 7 days (great for catch-ups)\n"
+        "• `/digest disable` – turn the weekly digest off\n"
+        "• `/vote` – check your supporter status + get the vote link\n\n"
+
         "**Maintenance**\n"
         "• Past events auto-delete after they pass ✅\n"
         "• `/archivepast` – manual cleanup (rarely needed now)\n"
@@ -2990,10 +3027,12 @@ async def chronohelp(interaction: discord.Interaction):
         "• `/purgeevents confirm: YES` – delete all events for this server\n"
         "• `/update_countdown` – force-refresh the pinned countdown\n"
         "• `/resendsetup` – resend setup instructions\n\n"
+
         "**Optional: DM control**\n"
         "• `/linkserver` – link your DMs to this server (Manage Server required)\n"
         "• Then DM me `/addevent` to add events remotely\n"
     )
+
 
     await interaction.response.send_message(text, ephemeral=True)
 
