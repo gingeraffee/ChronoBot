@@ -93,7 +93,8 @@ TOPGG_API_BASE = "https://top.gg/api"
 async def topgg_has_voted(user_id: int, *, force: bool = False) -> bool:
     now = time.monotonic()
     cached = _vote_cache.get(user_id)
-    if cached and (now - cached[0] <= VOTE_CACHE_TTL_SECONDS):
+
+    if (not force) and cached and (now - cached[0] <= VOTE_CACHE_TTL_SECONDS):
         return cached[1]
 
     # Need BOTH token + bot id for the documented check endpoint
@@ -103,7 +104,7 @@ async def topgg_has_voted(user_id: int, *, force: bool = False) -> bool:
         return voted
 
     url = f"{TOPGG_API_BASE}/bots/{TOPGG_BOT_ID}/check"
-    headers = {"Authorization": TOPGG_TOKEN.strip()}  # no Bearer
+    headers = {"Authorization": TOPGG_TOKEN.strip()}  # v0 docs: no Bearer :contentReference[oaicite:2]{index=2}
     params = {"userId": str(user_id)}
     timeout = aiohttp.ClientTimeout(total=6)
 
@@ -120,8 +121,6 @@ async def topgg_has_voted(user_id: int, *, force: bool = False) -> bool:
 
     _vote_cache[user_id] = (now, voted)
     return voted
-
-
 
 async def send_vote_required(interaction: discord.Interaction, feature_label: str) -> None:
     content = (
@@ -140,6 +139,9 @@ async def send_vote_required(interaction: discord.Interaction, feature_label: st
 def require_vote(feature_label: str):
     async def predicate(interaction: discord.Interaction) -> bool:
         voted = await topgg_has_voted(interaction.user.id)
+        if not voted:
+            voted = await topgg_has_voted(interaction.user.id, force=True)
+
         if voted:
             return True
 
@@ -1756,7 +1758,7 @@ async def _safe_ephemeral(interaction: discord.Interaction, content: str):
 
 @bot.tree.command(name="vote", description="Vote for Chromie on Top.gg to unlock supporter perks.")
 async def vote_cmd(interaction: discord.Interaction):
-    voted = await topgg_has_voted(interaction.user.id)
+    voted = await topgg_has_voted(interaction.user.id, force=True)
     status = "✅ You currently have supporter access." if voted else "❌ You don’t have an active vote yet."
 
     await interaction.response.send_message(
