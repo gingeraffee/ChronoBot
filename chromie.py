@@ -2304,11 +2304,6 @@ def get_theme_layout(guild_state: dict) -> dict:
     theme_id = (guild_state.get("theme") or "classic").lower()
     return THEME_LAYOUTS.get(theme_id, THEME_LAYOUTS["classic"])
 
-
-def get_theme_layout(guild_state: dict) -> dict:
-    theme_id = (guild_state.get("theme") or "classic").lower()
-    return THEME_LAYOUTS.get(theme_id, THEME_LAYOUTS["classic"])
-
 def format_event_dt(dt: datetime) -> str:
     # Example: January 5, 2026 • 8:30 PM CST
     date_part = dt.strftime("%B %d, %Y")
