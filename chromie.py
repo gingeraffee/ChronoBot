@@ -1,17 +1,19 @@
 import os
 import json
 from pathlib import Path
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
-from typing import Optional, List, Tuple, Dict
+from typing import Optional, List, Tuple, Dict, Any
 import time
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
 from threading import Lock
 import random
+import re
 import aiohttp
 import difflib
+import hashlib
 from discord.errors import NotFound as DiscordNotFound, Forbidden as DiscordForbidden, HTTPException
 # ==========================
 # CONFIG
@@ -30,6 +32,8 @@ FAQ_URL = "https://nicolethornton330-maker.github.io/chronobot-faq/"
 SUPPORT_SERVER_URL = os.getenv("CHROMIE_SUPPORT_SERVER_URL", "").strip()  # set in Render/hosting env
 
 EMBED_COLOR = discord.Color.from_rgb(140, 82, 255)  # ChronoBot purple
+
+DEFAULT_THEME_ID = "classic"  # Chrono purple classic theme
 
 LOG_THROTTLE_SECONDS = 60 * 30  # 30 minutes
 _last_log = {}  # (guild_id, code) -> last_time
@@ -288,7 +292,7 @@ def get_guild_state(guild_id: int) -> dict:
             "event_channel_set_at": None,
 
             # NEW (supporter features)
-            "theme": "default",
+            "theme": DEFAULT_THEME_ID,
             "default_milestones": DEFAULT_MILESTONES.copy(),
             "templates": {},  # { "name_key": {...template...} }
             "digest": {
@@ -306,7 +310,7 @@ def get_guild_state(guild_id: int) -> dict:
         guilds[gid].setdefault("welcomed", False)
         guilds[gid].setdefault("event_channel_set_by", None)
         guilds[gid].setdefault("event_channel_set_at", None)
-        guilds[gid].setdefault("theme", "default")
+        guilds[gid].setdefault("theme", DEFAULT_THEME_ID)
         guilds[gid].setdefault("default_milestones", DEFAULT_MILESTONES.copy())
         guilds[gid].setdefault("templates", {})
         guilds[gid].setdefault("digest", {"enabled": False, "channel_id": None, "last_sent_date": None})
@@ -1037,312 +1041,482 @@ def chunk_text(text: str, limit: int = 1900) -> list[str]:
         chunks.append(text)
     return chunks
 
-def build_embed_for_guild(guild_state: dict):
-    sort_events(guild_state)
-    events = guild_state.get("events", [])
+
+
+# ---- THEMES (pool-based) ----
+# Classic is always available. The others are "supporter" themes (unlocked via /vote).
+THEME_ALIASES: Dict[str, str] = {
+    # Back-compat / old keys
+    "default": "classic",
+    "classic": "classic",
+    "celebration": "celebratory",
+    "party": "celebratory",
+    "gaming": "gamer",
+    "game": "gamer",
+    "minimal": "minimalist",
+    "spook": "spooky",
+    "halloween": "spooky",
+    "retro": "retro",
+    "arcade": "retro",
+    "neon": "retro",
+    "sport": "sporty",
+    "athletic": "sporty",
+    "cute": "cutesy",
+}
+
+THEMES: Dict[str, Dict[str, Any]] = {
+    "classic": {
+        "label": "Classic",
+        "supporter_only": False,
+        "color": EMBED_COLOR,
+        "pin_title_pool": ["Chrono Countdown 🕒", "Countdown Board ⏳", "Event Timeline 💜"],
+        "event_emoji_pool": ["🕒", "⏳", "⌛", "💜", "✨", "🔔"],
+        "milestone_emoji_pool": ["⏳", "🕒", "🔔", "✨", "💜"],
+        "milestone_templates": {
+            "default": [
+                "{emoji} **{event}** is in **{days} days** ({time_left}) • **{date}**",
+                "{emoji} Countdown check-in: **{event}** — **{days} days** left ({time_left}) • **{date}**",
+            ],
+            "one_day": [
+                "{emoji} **{event}** is **tomorrow** ({time_left}) • **{date}**",
+                "{emoji} Tomorrow: **{event}** ({time_left}) • **{date}**",
+            ],
+            "zero_day": [
+                "{emoji} **{event}** is **today** ({time_left}) • **{date}**",
+                "{emoji} Today’s the day: **{event}** ({time_left}) • **{date}**",
+            ],
+        },
+        "repeat_templates": [
+            "{emoji} 🔁 **{event}** repeats — next up in **{time_left}** (on **{date}**).",
+            "{emoji} 🔁 Looping event: **{event}** — **{time_left}** until the next round (on **{date}**).",
+        ],
+        "remindall_templates": [
+            "{emoji} Reminder: **{event}** is in **{time_left}** (on **{date}**).",
+        ],
+        "start_blast_templates": [
+            "⏰ **{event}** is happening now!",
+            "🚀 It’s time: **{event}** starts now!",
+            "✨ Go time! **{event}** is live!",
+        ],
+    },
+
+    # Supporter themes
+    "cutesy": {
+        "label": "Cutesy",
+        "supporter_only": True,
+        "color": discord.Color.from_rgb(255, 105, 180),
+        "pin_title_pool": ["Sweet Countdown 💗", "Heartbeats & Deadlines 💞", "Little Countdowns 🎀"],
+        "event_emoji_pool": ["💗", "💕", "💖", "💘", "🌸", "🎀", "🐰"],
+        "milestone_emoji_pool": ["💗", "💖", "💕", "🎀", "🌸"],
+        "milestone_templates": {
+            "default": [
+                "{emoji} Psst! **{event}** is in **{days} days** ({time_left}) • **{date}**",
+                "{emoji} Hearts-up: **{event}** — **{days} days** to go ({time_left}) • **{date}**",
+            ],
+            "one_day": [
+                "{emoji} Aaa— **{event}** is **tomorrow**! ({time_left}) • **{date}**",
+                "{emoji} Tomorrow’s a big one: **{event}** ({time_left}) • **{date}**",
+            ],
+            "zero_day": [
+                "{emoji} It’s **today**!! **{event}** ({time_left}) • **{date}**",
+                "{emoji} Sparkly alert: **{event}** is **today** ({time_left}) • **{date}**",
+            ],
+        },
+        "repeat_templates": [
+            "{emoji} 🔁 **{event}** repeats — next cuddle-countdown in **{time_left}** (on **{date}**).",
+        ],
+        "remindall_templates": [
+            "{emoji} Tiny reminder: **{event}** is in **{time_left}** (on **{date}**).",
+        ],
+        "start_blast_templates": [
+            "💖 **{event}** is happening now!",
+            "🎀 It’s time! **{event}** starts now!",
+        ],
+    },
+
+    "sporty": {
+        "label": "Sporty",
+        "supporter_only": True,
+        "color": discord.Color.from_rgb(60, 179, 113),
+        "pin_title_pool": ["Game Plan 🏅", "Training Schedule 🏋️", "Next Up on Deck 🏟️"],
+        "event_emoji_pool": ["🏀", "⚽", "🏈", "⚾", "🎾", "🏐", "🏅", "🏋️"],
+        "milestone_emoji_pool": ["🏅", "⏱️", "📣", "🏆", "🥇"],
+        "milestone_templates": {
+            "default": [
+                "{emoji} Coach’s note: **{event}** — **{days} days** out ({time_left}) • **{date}**",
+                "{emoji} Training update: **{event}** in **{days} days** ({time_left}) • **{date}**",
+            ],
+            "one_day": [
+                "{emoji} Final warm-up: **{event}** is **tomorrow** ({time_left}) • **{date}**",
+            ],
+            "zero_day": [
+                "{emoji} It’s game day: **{event}** ({time_left}) • **{date}**",
+                "{emoji} GO TIME: **{event}** is **today** ({time_left}) • **{date}**",
+            ],
+        },
+        "repeat_templates": [
+            "{emoji} 🔁 **{event}** repeats — next match in **{time_left}** (on **{date}**).",
+        ],
+        "remindall_templates": [
+            "{emoji} Reminder: **{event}** in **{time_left}** (on **{date}**).",
+        ],
+        "start_blast_templates": [
+            "📣 **{event}** starts now — let’s go!",
+            "🏆 It’s on: **{event}** is live!",
+        ],
+    },
+
+    "gamer": {
+        "label": "Gamer",
+        "supporter_only": True,
+        "color": discord.Color.from_rgb(0, 255, 204),
+        "pin_title_pool": ["Quest Log 🎮", "Next Objectives 🕹️", "Countdown HUD 🧩"],
+        "event_emoji_pool": ["🎮", "🕹️", "🧩", "🗡️", "🛡️", "🪙", "🏆", "✨"],
+        "milestone_emoji_pool": ["🎮", "🕹️", "🧩", "🪙", "🏆"],
+        "milestone_templates": {
+            "default": [
+                "{emoji} Quest update: **{event}** in **{days} days** ({time_left}) • **{date}**",
+                "{emoji} Objective ping: **{event}** — **{days} days** left ({time_left}) • **{date}**",
+            ],
+            "one_day": [
+                "{emoji} Tomorrow: **{event}** unlocks ({time_left}) • **{date}**",
+            ],
+            "zero_day": [
+                "{emoji} It’s live! **{event}** starts **today** ({time_left}) • **{date}**",
+                "{emoji} Boss fight scheduled: **{event}** is **today** ({time_left}) • **{date}**",
+            ],
+        },
+        "repeat_templates": [
+            "{emoji} 🔁 **{event}** repeats — next respawn in **{time_left}** (on **{date}**).",
+        ],
+        "remindall_templates": [
+            "{emoji} Reminder ping: **{event}** in **{time_left}** (on **{date}**).",
+        ],
+        "start_blast_templates": [
+            "🎮 **{event}** is live — GG!",
+            "🕹️ Start signal: **{event}** begins now!",
+        ],
+    },
+
+    "minimalist": {
+        "label": "Minimalist",
+        "supporter_only": True,
+        "color": discord.Color.from_rgb(200, 200, 200),
+        "pin_title_pool": ["Timeline ▫️", "Schedule ▪️", "Events ◻️"],
+        "event_emoji_pool": ["▫️", "▪️", "◻️", "◽", "◇", "▸", "✧"],
+        "milestone_emoji_pool": ["▫️", "▪️", "✧"],
+        "milestone_templates": {
+            "default": [
+                "{emoji} **{event}** — **{days} days** ({time_left}) • **{date}**",
+                "{emoji} **{event}** — **{days} days** remaining ({time_left}) • **{date}**",
+            ],
+            "one_day": [
+                "{emoji} **{event}** — **tomorrow** ({time_left}) • **{date}**",
+            ],
+            "zero_day": [
+                "{emoji} **{event}** — **today** ({time_left}) • **{date}**",
+            ],
+        },
+        "repeat_templates": [
+            "{emoji} 🔁 **{event}** — repeats in **{time_left}** (on **{date}**).",
+        ],
+        "remindall_templates": [
+            "{emoji} **{event}** — **{time_left}** (on **{date}**).",
+        ],
+        "start_blast_templates": [
+            "⏱️ **{event}** starts now.",
+            "• **{event}** is live.",
+        ],
+    },
+
+    "celebratory": {
+        "label": "Celebratory",
+        "supporter_only": True,
+        "color": discord.Color.from_rgb(255, 215, 0),
+        "pin_title_pool": ["Party Countdown 🎉", "Good Times Ahead 🥳", "Celebration Board 🎊"],
+        "event_emoji_pool": ["🎉", "🥳", "🎊", "✨", "🪩", "🎆", "🍾"],
+        "milestone_emoji_pool": ["🎉", "🎊", "🥳", "✨", "🪩"],
+        "milestone_templates": {
+            "default": [
+                "{emoji} Countdown! **{event}** in **{days} days** ({time_left}) • **{date}**",
+                "{emoji} Hype check: **{event}** — **{days} days** to go ({time_left}) • **{date}**",
+            ],
+            "one_day": [
+                "{emoji} Tomorrow we celebrate: **{event}** ({time_left}) • **{date}**",
+            ],
+            "zero_day": [
+                "{emoji} It’s celebration day: **{event}** is **today** ({time_left}) • **{date}**",
+                "{emoji} Pop the confetti: **{event}** starts **today** ({time_left}) • **{date}**",
+            ],
+        },
+        "repeat_templates": [
+            "{emoji} 🔁 **{event}** repeats — next party in **{time_left}** (on **{date}**).",
+        ],
+        "remindall_templates": [
+            "{emoji} Reminder: **{event}** in **{time_left}** (on **{date}**).",
+        ],
+        "start_blast_templates": [
+            "🎊 **{event}** starts now — make it loud!",
+            "🥳 It’s here: **{event}** is live!",
+        ],
+    },
+
+    "spooky": {
+        "label": "Spooky",
+        "supporter_only": True,
+        "color": discord.Color.from_rgb(120, 60, 180),
+        "pin_title_pool": ["Haunted Countdown 🎃", "Witchy Timeline 🔮", "Midnight Schedule 🕯️"],
+        "event_emoji_pool": ["🎃", "👻", "🕸️", "🕯️", "🧙‍♀️", "🦇", "🔮"],
+        "milestone_emoji_pool": ["🕯️", "🔮", "🎃", "🦇", "👻"],
+        "milestone_templates": {
+            "default": [
+                "{emoji} The clock creaks… **{event}** in **{days} days** ({time_left}) • **{date}**",
+                "{emoji} Omen update: **{event}** — **{days} days** remain ({time_left}) • **{date}**",
+            ],
+            "one_day": [
+                "{emoji} One night away: **{event}** is **tomorrow** ({time_left}) • **{date}**",
+            ],
+            "zero_day": [
+                "{emoji} The veil is thin: **{event}** is **today** ({time_left}) • **{date}**",
+                "{emoji} Tonight’s the night: **{event}** begins **today** ({time_left}) • **{date}**",
+            ],
+        },
+        "repeat_templates": [
+            "{emoji} 🔁 **{event}** repeats — next haunting in **{time_left}** (on **{date}**).",
+        ],
+        "remindall_templates": [
+            "{emoji} Reminder: **{event}** in **{time_left}** (on **{date}**).",
+        ],
+        "start_blast_templates": [
+            "🕯️ **{event}** begins… now.",
+            "👻 The moment arrives: **{event}** is live!",
+        ],
+    },
+
+    "vivid": {
+        "label": "Vivid",
+        "supporter_only": True,
+        "color": discord.Color.from_rgb(255, 80, 80),
+        "pin_title_pool": ["Hype Countdown ⚡", "Incoming Moments 🚀", "Big Energy Timeline 💥"],
+        "event_emoji_pool": ["⚡", "🔥", "💥", "🚀", "🌟", "✨", "🎇", "🌈"],
+        "milestone_emoji_pool": ["⚡", "🔥", "💥", "🚀", "🌟"],
+        "milestone_templates": {
+            "default": [
+                "{emoji} Incoming: **{event}** in **{days} days** ({time_left}) • **{date}**",
+                "{emoji} Build-up mode: **{event}** — **{days} days** left ({time_left}) • **{date}**",
+            ],
+            "one_day": [
+                "{emoji} Final countdown: **{event}** is **tomorrow** ({time_left}) • **{date}**",
+            ],
+            "zero_day": [
+                "{emoji} It hits **today**: **{event}** ({time_left}) • **{date}**",
+                "{emoji} Today we launch: **{event}** ({time_left}) • **{date}**",
+            ],
+        },
+        "repeat_templates": [
+            "{emoji} 🔁 **{event}** repeats — next wave in **{time_left}** (on **{date}**).",
+        ],
+        "remindall_templates": [
+            "{emoji} Reminder: **{event}** in **{time_left}** (on **{date}**).",
+        ],
+        "start_blast_templates": [
+            "💥 **{event}** starts NOW!",
+            "🚀 Launch: **{event}** is live!",
+        ],
+    },
+
+    "retro": {
+        "label": "Retro",
+        "supporter_only": True,
+        "color": discord.Color.from_rgb(0, 200, 180),
+        "pin_title_pool": ["Retro Countdown 📼", "Throwback Timeline 🛼", "Quirky Schedule 📟"],
+        "event_emoji_pool": ["📼", "📺", "🕹️", "💾", "📟", "🛼", "🎶", "🪩"],
+        "milestone_emoji_pool": ["📼", "🛼", "🕹️", "🎶", "🪩"],
+        "milestone_templates": {
+            "default": [
+                "{emoji} Throwback alert: **{event}** in **{days} days** ({time_left}) • **{date}**",
+                "{emoji} Tape rewind… **{event}** — **{days} days** left ({time_left}) • **{date}**",
+            ],
+            "one_day": [
+                "{emoji} Tomorrow’s the vibe: **{event}** ({time_left}) • **{date}**",
+            ],
+            "zero_day": [
+                "{emoji} It’s on today: **{event}** ({time_left}) • **{date}**",
+                "{emoji} Cue the theme song: **{event}** starts **today** ({time_left}) • **{date}**",
+            ],
+        },
+        "repeat_templates": [
+            "{emoji} 🔁 **{event}** repeats — next rerun in **{time_left}** (on **{date}**).",
+        ],
+        "remindall_templates": [
+            "{emoji} Reminder: **{event}** in **{time_left}** (on **{date}**).",
+        ],
+        "start_blast_templates": [
+            "📺 Now playing: **{event}**!",
+            "🕹️ Insert coin — **{event}** starts now!",
+        ],
+    },
+}
+
+_THEME_LABELS: Dict[str, str] = {
+    "classic": "Classic (free) 💜",
+    "cutesy": "Cutesy (supporter) 💗",
+    "sporty": "Sporty (supporter) 🏅",
+    "gamer": "Gamer (supporter) 🎮",
+    "minimalist": "Minimalist (supporter) ▫️",
+    "celebratory": "Celebratory (supporter) 🎉",
+    "spooky": "Spooky (supporter) 🎃",
+    "vivid": "Vivid (supporter) ⚡",
+    "retro": "Retro (supporter) 📼",
+}
+
+def normalize_theme_key(raw: Optional[str]) -> str:
+    t = (raw or DEFAULT_THEME_ID).strip().lower()
+    t = re.sub(r"[^a-z0-9_\-]", "", t)
+    return THEME_ALIASES.get(t, t)
+
+def _stable_pick(pool: List[str], seed: str) -> str:
+    if not pool:
+        return ""
+    h = hashlib.blake2b(seed.encode("utf-8"), digest_size=8).hexdigest()
+    idx = int(h, 16) % len(pool)
+    return pool[idx]
+
+def get_theme_profile(guild_state: dict) -> Tuple[str, Dict[str, Any]]:
+    theme_id = normalize_theme_key(guild_state.get("theme"))
+    profile = THEMES.get(theme_id) or THEMES[DEFAULT_THEME_ID]
+    return theme_id if theme_id in THEMES else DEFAULT_THEME_ID, profile
+
+def pick_event_emoji(theme_id: str, profile: Dict[str, Any], *, seed: str) -> str:
+    pool = profile.get("event_emoji_pool") or THEMES[DEFAULT_THEME_ID]["event_emoji_pool"]
+    return _stable_pick(pool, f"{theme_id}|{seed}")
+
+def pick_title(theme_id: str, profile: Dict[str, Any], *, seed: str) -> str:
+    pool = profile.get("pin_title_pool") or THEMES[DEFAULT_THEME_ID]["pin_title_pool"]
+    return _stable_pick(pool, f"{theme_id}|title|{seed}")
+
+def pick_milestone_emoji(profile: Dict[str, Any]) -> str:
+    pool = profile.get("milestone_emoji_pool") or THEMES[DEFAULT_THEME_ID]["milestone_emoji_pool"]
+    return random.choice(pool) if pool else "⏳"
+
+def pick_template(profile: Dict[str, Any], key: str, fallback_key: str = "default") -> str:
+    bucket = profile.get("milestone_templates", {})
+    pool = bucket.get(key) or bucket.get(fallback_key) or THEMES[DEFAULT_THEME_ID]["milestone_templates"]["default"]
+    return random.choice(pool) if pool else "{emoji} **{event}**"
+
+def build_milestone_message(guild_state: dict, *, event_name: str, days_left: int, time_left: str, date_str: str) -> str:
+    theme_id, profile = get_theme_profile(guild_state)
+    emoji = pick_milestone_emoji(profile)
+    key = "zero_day" if days_left == 0 else ("one_day" if days_left == 1 else "default")
+    template = pick_template(profile, key)
+    return template.format(emoji=emoji, event=event_name, days=days_left, time_left=time_left, date=date_str)
+
+def build_repeat_message(guild_state: dict, *, event_name: str, time_left: str, date_str: str) -> str:
+    _, profile = get_theme_profile(guild_state)
+    emoji = pick_milestone_emoji(profile)
+    pool = profile.get("repeat_templates") or THEMES[DEFAULT_THEME_ID]["repeat_templates"]
+    template = random.choice(pool) if pool else "{emoji} 🔁 **{event}** repeats — next up in **{time_left}** (on **{date}**)."
+    return template.format(emoji=emoji, event=event_name, time_left=time_left, date=date_str)
+
+def build_remindall_message(guild_state: dict, *, event_name: str, time_left: str, date_str: str) -> str:
+    _, profile = get_theme_profile(guild_state)
+    emoji = pick_milestone_emoji(profile)
+    pool = profile.get("remindall_templates") or THEMES[DEFAULT_THEME_ID]["remindall_templates"]
+    template = random.choice(pool) if pool else "{emoji} Reminder: **{event}** is in **{time_left}** (on **{date}**)."
+    return template.format(emoji=emoji, event=event_name, time_left=time_left, date=date_str)
+
+def build_start_blast_message(guild_state: dict, *, event_name: str) -> str:
+    _, profile = get_theme_profile(guild_state)
+    pool = profile.get("start_blast_templates") or THEMES[DEFAULT_THEME_ID]["start_blast_templates"]
+    template = random.choice(pool) if pool else "⏰ **{event}** is happening now!"
+    return template.format(event=event_name)
+
+
+def build_embed_for_guild(guild_state: dict) -> discord.Embed:
+    """
+    Build the pinned countdown embed for a guild.
+
+    Design goals:
+    - Compact: one line per event (no spacer fields).
+    - No event owner/creator in the pinned message (reserve space for event info).
+    - Theme-aware emoji + vibe.
+    """
+    theme_id, profile = get_theme_profile(guild_state)
+
+    seed = str(guild_state.get("event_channel_id") or guild_state.get("guild_id") or "0")
+    title = pick_title(theme_id, profile, seed=seed)
 
     embed = discord.Embed(
-        title="Upcoming Event Countdowns",
-        color=EMBED_COLOR,
+        title=title,
+        color=profile.get("color", EMBED_COLOR),
     )
 
+    events = guild_state.get("events", []) or []
     if not events:
-        embed.description = "No events yet. Use `/addevent` to add one."
+        embed.description = "_No events yet. Use **/addevent** to add one._"
+        embed.set_footer(text=_append_vote_footer(f"Theme: {_THEME_LABELS.get(theme_id, theme_id.title())}"))
         return embed
 
-    lines: list[str] = []
-    any_upcoming = False
+    now = datetime.now(DEFAULT_TZ)
+    grace = timedelta(hours=PASSED_EVENT_GRACE_HOURS)
 
+    # Sort events by timestamp (backstop; events are usually already sorted)
+    items: List[Tuple[datetime, dict]] = []
     for ev in events:
-        dt = datetime.fromtimestamp(ev["timestamp"], tz=DEFAULT_TZ)
-        desc, days_left, passed = compute_time_left(dt)
-
-        # Shorter date format to save space
-        date_str = dt.strftime("%b %d, %Y • %I:%M %p %Z").replace(" 0", " ")
-
-        if passed:
-            lines.append(f"**{ev['name']}** — {date_str} — 🎉 started/passed")
-        else:
-            any_upcoming = True
-            lines.append(f"**{ev['name']}** — {date_str} — ⏱ **{desc}** left")
-
-    # Discord embed descriptions have a max length (4096). Keep a safety buffer.
-    max_len = 3900
-    desc_text = ""
-    for line in lines:
-        candidate = f"{desc_text}\n{line}" if desc_text else line
-        if len(candidate) > max_len:
-            desc_text += "\n… *(more events omitted)*"
-            break
-        desc_text = candidate
-
-    embed.description = desc_text
-
-    if not any_upcoming:
-        embed.set_footer(text="All listed events have already started or passed.")
-
-    return embed
-
-
-    now_dt = datetime.now(DEFAULT_TZ)
-    live_now: list[tuple[dict, datetime]] = []
-    upcoming: list[tuple[dict, datetime]] = []
-
-    for ev in events:
-        ts = ev.get("timestamp")
-        if not isinstance(ts, int):
-            continue
         try:
-            dt = datetime.fromtimestamp(ts, tz=DEFAULT_TZ)
+            dt = datetime.fromisoformat(ev["when"])
         except Exception:
             continue
+        items.append((dt, ev))
+    items.sort(key=lambda x: x[0])
 
-        if dt <= now_dt:
-            age = (now_dt - dt).total_seconds()
-            if age <= STARTED_EVENT_KEEP_SECONDS:
-                live_now.append((ev, dt))
-        else:
-            upcoming.append((ev, dt))
-    live_now.sort(key=lambda t: t[1], reverse=True)
-    upcoming.sort(key=lambda t: t[1])
-        
-    # ✅ Add LIVE NOW section ONCE (after classification loop)
-    if live_now:
-        lines = []
-        for ev, dt in live_now[:5]:
-            ts = int(ev["timestamp"])
-            rel = f"<t:{ts}:R>"  # "x minutes ago"
-            full = f"<t:{ts}:F>"
-            name = (ev.get("name", "Event") or "Event").strip()
-            lines.append(f"• **{name}** — started {rel}\n  {full}")
+    lines: List[str] = []
+    first_upcoming_name: Optional[str] = None
 
-        extra = ""
-        if len(live_now) > 5:
-            extra = f"\n… and {len(live_now) - 5} more live event(s)."
+    for dt, ev in items:
+        name = (ev.get("name") or "Untitled").strip()
+        ts = int(dt.timestamp())
+        is_live = dt <= now <= (dt + grace)
+        is_past = dt < (now - grace)
 
-        embed.add_field(
-            name="🔴 LIVE NOW",
-            value=("\n".join(lines) + extra)[:1024],
-            inline=False,
-        )
+        # Skip old past events (they should also get pruned elsewhere)
+        if is_past:
+            continue
 
-    # ✅ If there are no upcoming events, you can still return,
-    # but now LIVE NOW will already be shown above.
-    if not upcoming:
-        embed.add_field(
-            name="No upcoming events",
-            value="Everything has started/passed. Add a new one with `/addevent`.",
-            inline=False,
-        )
-        embed.set_footer(text=_append_vote_footer("No upcoming events."))
-        return embed
-        
+        if first_upcoming_name is None and dt >= now:
+            first_upcoming_name = name
 
-    # Banner (first event with a banner wins)
-    for ev, _dt in upcoming:
-        banner = ev.get("banner_url")
-        if isinstance(banner, str) and banner.strip():
-            embed.set_image(url=banner.strip())
-            break
+        emoji = pick_event_emoji(theme_id, profile, seed=f"{ts}|{name}")
 
-    def _meta_line(ev: dict) -> str:
-        parts = []
+        tags: List[str] = []
+        if ev.get("repeat_every"):
+            try:
+                tags.append(f"🔁{int(ev['repeat_every'])}d")
+            except Exception:
+                tags.append("🔁")
+        if ev.get("silenced"):
+            tags.append("🔕")
 
-        repeat_every = ev.get("repeat_every_days")
-        if isinstance(repeat_every, int) and repeat_every > 0:
-            parts.append(f"Repeat: every {repeat_every}d")
+        tag_str = ("  " + " ".join(tags)) if tags else ""
+        base = f"{emoji} **{name}** — <t:{ts}:F> • <t:{ts}:R>{tag_str}"
+        line = f"🔴 {base}" if is_live else base
+        lines.append(line)
 
-        if bool(ev.get("silenced", False)):
-            parts.append("Silenced")
+    # Safety: keep within embed description limit
+    desc = "\n".join(lines).strip()
+    if len(desc) > 4000:
+        desc = desc[:3990] + "…"
 
-        owner = ev.get("owner_name")
-        if isinstance(owner, str) and owner.strip():
-            parts.append(f"Owner: {owner.strip()}")
+    embed.description = desc
 
-        creator = ev.get("created_by_name") or ev.get("owner_name")
-        if isinstance(creator, str) and creator.strip():
-            parts.append(f"Created by: {creator.strip()}")
+    # Optional banner based on the next upcoming event name (if configured)
+    if first_upcoming_name:
+        banner_url = pick_banner_for_event(first_upcoming_name)
+        if banner_url:
+            embed.set_image(url=banner_url)
 
-        return " • ".join(parts)
-
-    _NAME_EMOJI = {
-        "default": "⭐",
-        "gaming": "🎮",
-        "arcade": "🕹️",
-        "hypebeast": "💎",
-        "minimalist": "",     # minimalist stays clean
-        "cutesy": "🧸",
-        "celebration": "🎉",
-        "spooky": "🕯️",
-    }
-
-    _DETAIL_LABEL = {
-        "default": "Starts",
-        "gaming": "Queue pops",
-        "arcade": "Starts",
-        "hypebeast": "Drops",
-        "minimalist": "Starts",
-        "cutesy": "Happens",
-        "celebration": "Starts",
-        "spooky": "Approaches",
-    }
-
-    def _event_field_name(ev_name: str) -> str:
-        name = (ev_name or "Event").strip()
-        if len(name) > 180:
-            name = name[:179] + "…"
-
-        if theme == "hypebeast":
-            name = name.upper()
-
-        emoji = _NAME_EMOJI.get(theme, "⭐")
-        # ✅ Emoji ONLY on the event name line, and underline makes it “pop”
-        if emoji:
-            return f"{emoji} **__{name}__**"
-        return f"**__{name}__**"
-
-    def _event_field_value(ev: dict, dt: datetime) -> str:
-        ts = int(ev["timestamp"])
-        rel = f"<t:{ts}:R>"
-        full = f"<t:{ts}:F>"
-        label = _DETAIL_LABEL.get(theme, "Starts")
-        meta = _meta_line(ev)
-
-        out = (
-            f"{label} {rel}\n"
-            f"On {full}"
-        )
-
-        if meta:
-            out += f"\n\n_{meta}_"
-
-        # ✅ Adds extra spacing so fields feel less cramped
-        out += "\n\u200b"
-        return out
-
-
-    def _event_value(ev: dict, dt: datetime) -> str:
-        ts = int(ev["timestamp"])
-        rel = f"<t:{ts}:R>"
-        full = f"<t:{ts}:F>"
-        meta = _meta_line(ev)
-        meta_line = f"\n{meta}" if meta else ""
-
-        # Roomier layout: header, blank line, relative, date, meta, spacer
-        if theme == "arcade":
-            return (
-                f"🟪🟦 **INSERT COIN** 🟦🟪\n\n"
-                f"⏱️ **{rel}**\n"
-                f"📅 {full}"
-                f"{meta_line}\n{SPACER}"
-            )
-        if theme == "hypebeast":
-            return (
-                f"💎 **NEXT DROP:** **{rel}**\n\n"
-                f"📅 {full}"
-                f"{meta_line}\n{SPACER}"
-            )
-        if theme == "cutesy":
-            return (
-                f"✨ **Happens** {rel}\n\n"
-                f"📅 {full}\n"
-                f"🍓 stay cute, stay on time"
-                f"{meta_line}\n{SPACER}"
-            )
-        if theme == "celebration":
-            return (
-                f"🎊 **Countdown:** **{rel}**\n\n"
-                f"📅 {full}"
-                f"{meta_line}\n{SPACER}"
-            )
-        if theme == "spooky":
-            return (
-                f"🕯️ **The hour approaches:** **{rel}**\n\n"
-                f"📜 {full}"
-                f"{meta_line}\n{SPACER}"
-            )
-        if theme == "gaming":
-            return (
-                f"🏁 **Queue pop:** **{rel}**\n\n"
-                f"🗓️ {full}"
-                f"{meta_line}\n{SPACER}"
-            )
-
-        return f"⏳ **{rel}**\n\n🗓️ {full}{meta_line}\n{SPACER}"
-
-    # Minimalist mode: one clean list in the description area (with more breathing room)
-    if profile.get("mode") == "list":
-        lines = []
-        for ev, dt in upcoming:
-            ts = int(ev["timestamp"])
-            rel = f"<t:{ts}:R>"
-            full = f"<t:{ts}:F>"
-            meta = _meta_line(ev)
-            meta_txt = f" • {meta}" if meta else ""
-            name = (ev.get("name", "Event") or "Event").strip()
-
-            # Extra newline between items for spacing
-            lines.append(
-                f"• **{name}** — **{rel}**\n"
-                f"  {full}{meta_txt}\n"
-                f"{SPACER}"
-            )
-
-        body = "\n".join(lines)
-        if len(body) > 3600:
-            body = body[:3600].rsplit("\n", 1)[0] + "\n… (more events: use /listevents)"
-
-        embed.description = profile["description"] + "\n\n" + body
-        embed.set_footer(text=_append_vote_footer("Use /listevents for the full list."))
-        return embed
-
-    # Fields mode: spotlight “Next Up” + then per-event fields
-    next_ev, next_dt = upcoming[0]
-    next_name = (next_ev.get("name", "Event") or "Event").strip()
-
-    spotlight_label = {
-        "gaming": "🎯 NEXT QUEST",
-        "arcade": "⭐ NEXT ROUND",
-        "hypebeast": "🔥 NEXT DROP",
-        "cutesy": "🌸 NEXT LITTLE THING",
-        "celebration": "🥂 NEXT UP",
-        "spooky": "🦇 NEXT OMEN",
-        "default": "⭐ NEXT UP",
-    }.get(theme, "⭐ NEXT UP")
-
-    # ✅ Put the EVENT NAME in the FIELD TITLE for emphasis
-    spotlight_title = f"{spotlight_label} — {next_name}"
-    embed.add_field(
-        name=_event_field_name(next_name)[:256],
-        value=f"__{spotlight_label}__\n\n{_event_field_value(next_ev, next_dt)}",
-        inline=False,
-    )
-
-    shown = 0
-    max_events_to_show = MAX_EMBED_EVENTS - 1  # reserve 1 for spotlight
-
-    for ev, dt in upcoming[1:]:
-        if shown >= max_events_to_show:
-            break
-
-        name = (ev.get("name", "Event") or "Event").strip()
-
-        embed.add_field(
-            name=_event_field_name(name)[:256],
-            value=_event_field_value(ev, dt)[:1024],
-            inline=False,
-        )
-        shown += 1
-
-    total_upcoming = len(upcoming)
-    if total_upcoming > (shown + 1):
-        footer = f"Showing {shown+1} of {total_upcoming} upcoming events. Use /listevents to view all."
-    else:
-        footer = "Updated."
-
-    embed.set_footer(text=_append_vote_footer(footer))
+    embed.set_footer(text=_append_vote_footer(f"Theme: {_THEME_LABELS.get(theme_id, theme_id.title())}"))
     return embed
-
 
 async def rebuild_pinned_message(guild_id: int, channel: discord.TextChannel, guild_state: dict):
     sort_events(guild_state)
@@ -1870,7 +2044,7 @@ async def update_countdowns():
                             else:
                                 mention_prefix, allowed = build_milestone_mention(channel, guild_state)
 
-                            text = mention_prefix + build_event_start_blast(ev.get("name", "Event"))
+                            text = mention_prefix + build_start_blast_message(guild_state, event_name=ev.get("name", "Event"))
 
                             try:
                                 await channel.send(text, allowed_mentions=allowed)
@@ -1916,15 +2090,19 @@ async def update_countdowns():
                 if days_left in milestones and days_left not in announced:
                     mention_prefix, allowed_mentions = build_milestone_mention(channel, guild_state)
 
-                    if days_left == 0:
-                        text = f"{mention_prefix}🎉 **{ev.get('name', 'Event')}** is **today**! 🎉"
-                    elif days_left == 1:
-                        text = f"{mention_prefix}✨ **{ev.get('name', 'Event')}** is **tomorrow**! ✨"
-                    else:
-                        text = (
-                            f"{mention_prefix}💌 **{ev.get('name', 'Event')}** is **{days_left} day"
-                            f"{'s' if days_left != 1 else ''}** away!"
-                        )
+                    event_name = ev.get("name", "Event")
+                    try:
+                        date_str = dt.strftime("%B %d, %Y")
+                    except Exception:
+                        date_str = ""
+                    body = build_milestone_message(
+                        guild_state,
+                        event_name=event_name,
+                        days_left=days_left,
+                        time_left=desc,
+                        date_str=date_str,
+                    )
+                    text = f"{mention_prefix}{body}"
 
                     try:
                         await channel.send(text, allowed_mentions=allowed_mentions)
@@ -1979,8 +2157,14 @@ async def update_countdowns():
                         if today.isoformat() not in sent_dates and not milestone_sent_today:
                             try:
                                 date_str = dt.strftime("%B %d, %Y")
+                                text = build_repeat_message(
+                                    guild_state,
+                                    event_name=ev.get("name", "Event"),
+                                    time_left=desc,
+                                    date_str=date_str,
+                                )
                                 await channel.send(
-                                    f"🔁 Reminder: **{ev.get('name', 'Event')}** is in **{desc}** (on **{date_str}**).",
+                                    text,
                                     allowed_mentions=discord.AllowedMentions.none(),
                                 )
 
@@ -2754,7 +2938,8 @@ async def remindall(interaction: discord.Interaction, index: Optional[int] = Non
         mention_prefix, allowed = build_milestone_mention(channel, g)
 
     date_str = dt.strftime("%B %d, %Y at %I:%M %p %Z")
-    msg = f"{mention_prefix}⏰ Reminder: **{ev['name']}** is in **{desc}** (on **{date_str}**)."
+    body = build_remindall_message(g, event_name=ev["name"], time_left=desc, date_str=date_str)
+    msg = f"{mention_prefix}{body}"
 
     try:
         await channel.send(msg, allowed_mentions=allowed)
@@ -3489,114 +3674,63 @@ async def resendsetup(interaction: discord.Interaction):
         "📨 Setup instructions have been resent to the server owner (or a fallback channel)."
     )
 
-# ---- THEMES (new set) ----
 
-THEMES = [
-    "default",
-    "gaming",
-    "arcade",
-    "hypebeast",
-    "minimalist",
-    "cutesy",
-    "celebration",
-    "spooky",
-]
-
-# Back-compat: map your older theme names to the new vibe set
-THEME_ALIASES = {
-    "neon": "arcade",
-    "dramatic": "spooky",
-    "minimal": "minimalist",
-}
-
-_THEME_LABELS = {
-    "default": "Default — Chrono Purple (classic)",
-    "gaming": "Gaming — Party Queue 🎮",
-    "arcade": "Arcade — Insert Coin 🕹️",
-    "hypebeast": "Hypebeast — Next Drop 💎",
-    "minimalist": "Minimalist — Clean & Quiet ▫️",
-    "cutesy": "Cutesy — Sweet & Soft 🧸",
-    "celebration": "Celebration — Confetti Mode 🎉",
-    "spooky": "Spooky — Haunted Clock 🕯️",
-}
-
-def normalize_theme_key(raw: str) -> str:
-    t = (raw or "").strip().lower()
-    aliases = {
-        "minimal": "minimalist",
-        "min": "minimalist",
-        "cute": "cutesy",
-        "celebrate": "celebration",
-        "party": "celebration",
-        "spook": "spooky",
-    }
-    return aliases.get(t, t)
-
+# ---- THEME COMMAND ----
 
 async def theme_autocomplete(
     interaction: discord.Interaction,
     current: str,
 ) -> List[app_commands.Choice[str]]:
-    cur = (current or "").strip().lower()
-
+    cur = (current or "").lower().strip()
     out: List[app_commands.Choice[str]] = []
-    for t in THEMES:
-        label = _THEME_LABELS.get(t, t)
-        if cur and (cur not in t and cur not in label.lower()):
-            continue
-        out.append(app_commands.Choice(name=label[:100], value=t))
-
+    for key in THEMES.keys():
+        label = _THEME_LABELS.get(key, key.title())
+        if not cur or cur in key or cur in label.lower():
+            out.append(app_commands.Choice(name=label, value=key))
     return out[:25]
 
 
-
-@bot.tree.command(name="theme", description="Set the pinned countdown theme (Supporter perk).")
-@app_commands.describe(theme="Theme name")
-@app_commands.autocomplete(theme=theme_autocomplete)  # ✅ adds autocomplete
-@require_vote("/theme")
+@bot.tree.command(name="theme", description="Set the countdown theme (supporter themes require /vote).")
+@app_commands.describe(theme="Theme name (autocomplete will suggest options)")
+@app_commands.autocomplete(theme=theme_autocomplete)
 @app_commands.checks.has_permissions(manage_guild=True)
 @app_commands.guild_only()
 async def theme_cmd(interaction: discord.Interaction, theme: str):
     guild = interaction.guild
     assert guild is not None
 
-    raw = (theme or "").strip().lower()
+    await interaction.response.defer(ephemeral=True)
 
-    # ✅ Fuzzy “autocorrect”: allow partials + close matches
-    t = raw
-    if t not in THEMES:
-        # try startswith/contains first
-        t2 = next((x for x in THEMES if x.startswith(t)), None) if t else None
-        if not t2 and t:
-            t2 = next((x for x in THEMES if t in x), None)
-        if t2:
-            t = t2
-        else:
-            m = difflib.get_close_matches(t, THEMES, n=1, cutoff=0.6)
-            if m:
-                t = m[0]
-    t = normalize_theme_key(t)
-    
-    if t not in THEMES:
-        await interaction.response.send_message(
-            f"Unknown theme. Options: {', '.join(THEMES)}",
-            ephemeral=True,
-        )
+    theme_id = normalize_theme_key(theme)
+    if theme_id not in THEMES:
+        choices = ", ".join(sorted(THEMES.keys()))
+        await interaction.edit_original_response(content=f"Unknown theme: `{theme}`. Available: {choices}")
         return
 
+    # Classic is always allowed; supporter themes require an active /vote by the caller.
+    if THEMES[theme_id].get("supporter_only"):
+        voted = await topgg_has_voted(interaction.user.id, force=True)
+        if not voted:
+            await send_vote_required(interaction, feature_label=f"`{theme_id}` theme")
+            return
+
     g = get_guild_state(guild.id)
-    g["theme"] = t
+    g["theme"] = theme_id
     save_state()
 
-    # Refresh pinned embed (if configured)
-    ch_id = g.get("event_channel_id")
-    if ch_id:
-        ch = await get_text_channel(int(ch_id))
-        if ch:
-            await refresh_countdown_message(guild, g)
+    # Refresh the pinned message (best-effort)
+    try:
+        channel_id = g.get("event_channel_id")
+        if channel_id:
+            channel = await get_text_channel(channel_id)
+            if channel is not None:
+                pinned = await get_or_create_pinned_message(guild.id, channel, allow_create=True)
+                if pinned is not None:
+                    await update_countdown_message(guild, channel, pinned)
+    except Exception:
+        pass
 
-    await interaction.response.send_message(f"✅ Theme set to **{t}**.", ephemeral=True)
-
+    await interaction.edit_original_response(content=f"Theme set to **{_THEME_LABELS.get(theme_id, theme_id.title())}**.")
 
 
 @bot.tree.command(name="chronohelp", description="Show ChronoBot setup & command help.")
