@@ -2928,7 +2928,7 @@ async def update_countdowns():
                     continue  # don’t do milestones/repeats for started/past events
 
                 # ---- Milestones + repeating reminders ----
-                desc, _, passed = compute_time_left(not_dt, dt)
+                desc, _, passed = compute_time_left(now_dt, dt)
                 if passed:
                     continue
 
