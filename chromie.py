@@ -2342,7 +2342,15 @@ def compute_dhm(target: datetime, now: datetime) -> tuple[int, int, int, bool]:
 
 def build_embed_for_guild(guild_state: dict) -> discord.Embed:
     layout = get_theme_layout(guild_state)
+    
+    # ✅ define events (and harden against bad state)
+    events = guild_state.get("events", [])
+    if not isinstance(events, list):
+        events = []
 
+    # (optional) if you want to avoid mutating shared dicts while iterating
+    events = list(events)
+    
     override_title = (guild_state.get("countdown_title_override") or "").strip()
     embed_title = override_title[:256] if override_title else layout.get("title", "Event Countdown")
 
