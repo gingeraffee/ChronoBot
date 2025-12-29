@@ -1081,145 +1081,6 @@ def pick_theme_footer(theme_id: str, profile: Dict[str, Any], *, seed: str) -> s
     text = _stable_pick(pool, f"{theme_id}|footer|{seed}")
     return text.replace("{label}", label)
 
-
-# ---- THEME FOOTERS ----
-# Add these to each theme: THEMES["key"]["footer_pool"] = [...]
-
-THEMES["classic"]["footer_pool"] = [
-    "💜 Chrono Purple • /chronohelp",
-    "⏳ ChronoBot • Time is fake. Reminders are real.",
-    "✨ ChronoBot • Keeping your chaos on a schedule.",
-    "🕒 ChronoBot • One timeline to rule them all.",
-    "🗳️ Supporter themes unlock with /vote",
-    "📌 Tip: Use /theme anytime to swap vibes.",
-]
-
-THEMES["football"]["footer_pool"] = [
-    "🏈 Game Day • No timeouts on time.",
-    "⏱️ Play Clock • Counting down to kickoff.",
-    "📣 Sideline Report • /chronohelp for commands",
-    "🔥 Huddle Up • Big plays need good planning.",
-    "🗳️ Supporter theme • Unlock more with /vote",
-    "🏟️ Stadium Mode • Keep your schedule in-bounds.",
-]
-
-THEMES["basketball"]["footer_pool"] = [
-    "🏀 Tip-Off • The shot clock is always running.",
-    "⏱️ Shot Clock • Scheduling like a pro.",
-    "🔥 Clutch Time • Don’t leave it to overtime.",
-    "📣 Courtside • /chronohelp for commands",
-    "🗳️ Supporter theme • Unlock more with /vote",
-    "🏟️ Arena Lights • Next up on the board…",
-]
-
-THEMES["baseball"]["footer_pool"] = [
-    "⚾ On Deck • First pitch is coming.",
-    "🧢 Dugout Notes • Keep your dates in the lineup.",
-    "🏟️ Ballpark Board • /chronohelp for commands",
-    "🔥 Extra Innings • Planning beats panic.",
-    "🗳️ Supporter theme • Unlock more with /vote",
-    "🧤 Diamond Time • Don’t get caught off-base.",
-]
-
-THEMES["raidnight"]["footer_pool"] = [
-    "🎮 Raid Night • Ready check in progress.",
-    "🛡️ Party Finder • Don’t be late to the pull.",
-    "⚔️ Pull Timer • We go when the timer hits zero.",
-    "🧩 Objective HUD • /chronohelp for commands",
-    "🗳️ Supporter theme • Unlock more with /vote",
-    "🏆 Loot Council • Timers > excuses.",
-]
-
-THEMES["dnd"]["footer_pool"] = [
-    "🎲 Campaign Night • Roll initiative… later.",
-    "🐉 DM Notes • Respect the schedule, fear the dragon.",
-    "📜 The Next Chapter • /chronohelp for commands",
-    "🕯️ Tavern Board • Arrive on time, get inspiration.",
-    "🗳️ Supporter theme • Unlock more with /vote",
-    "🗺️ Quest Log • Side quests welcome. Missed sessions? Not so much.",
-]
-
-THEMES["girly"]["footer_pool"] = [
-    "🎀 Cute Aesthetic • Tiny plans, big sparkle.",
-    "💖 Soft Schedule • Your calendar, but make it cute.",
-    "✨ Pretty Timing • /chronohelp for commands",
-    "🌸 Sweet Reminder • Future-you says thank you.",
-    "🗳️ Supporter theme • Unlock more with /vote",
-    "🫧 Sparkle Mode • Countdowns with character.",
-]
-
-THEMES["workplace"]["footer_pool"] = [
-    "📌 Workplace Ops • Clear dates, clean execution.",
-    "🗓️ Operations Board • /chronohelp for commands",
-    "✅ Action Items • Planning beats firefighting.",
-    "📋 Timeline View • Keep the machine humming.",
-    "🗳️ Supporter theme • Unlock more with /vote",
-    "⏱️ On Schedule • Meetings don’t wait.",
-]
-
-THEMES["celebration"]["footer_pool"] = [
-    "🎉 Celebration • Confetti pending…",
-    "🎊 Party Board • Don’t forget the good stuff.",
-    "🥳 Good Times Ahead • /chronohelp for commands",
-    "🍾 Pop Soon • The countdown is part of the fun.",
-    "🗳️ Supporter theme • Unlock more with /vote",
-    "✨ Big Moment • Make it legendary.",
-]
-
-THEMES["romance"]["footer_pool"] = [
-    "💞 Romance • Soft plans, strong intentions.",
-    "🌹 Date Night • /chronohelp for commands",
-    "💌 Love Notes • Keep the magic on the calendar.",
-    "🕯️ Candlelight Mode • Timing is part of the spell.",
-    "🗳️ Supporter theme • Unlock more with /vote",
-    "🍷 Sweet Timing • Don’t be late to your own moment.",
-]
-
-THEMES["vacation"]["footer_pool"] = [
-    "🧳 Vacation • Out of office (emotionally).",
-    "✈️ Departures • /chronohelp for commands",
-    "🌴 Getaway Mode • Countdown to freedom.",
-    "🗺️ Travel Board • Future-you is already packing.",
-    "🗳️ Supporter theme • Unlock more with /vote",
-    "🏖️ Beach Brain • The trip starts when you plan it.",
-]
-
-THEMES["hype"]["footer_pool"] = [
-    "🚀 Hype Mode • Main character scheduling.",
-    "🔥 Big Energy • /chronohelp for commands",
-    "⚡ Incoming • Don’t blink — it’s soon.",
-    "🎉 Countdown Heat • We love a dramatic timer.",
-    "🗳️ Supporter theme • Unlock more with /vote",
-    "💥 Let’s Go • Future you is screaming.",
-]
-
-THEMES["minimal"]["footer_pool"] = [
-    "• Minimal • /chronohelp",
-    "⏱️ Simple timers. Clean schedule.",
-    "▫️ Less clutter. More clarity.",
-    "• Planning > panic.",
-    "🗳️ Supporter theme • Unlock more with /vote",
-    "• ChronoBot • Quietly keeping time.",
-]
-
-THEMES["school"]["footer_pool"] = [
-    "📚 School • Study now, celebrate later.",
-    "📝 Syllabus Mode • /chronohelp for commands",
-    "✅ Prep Checklist • Due dates don’t negotiate.",
-    "🧠 Focus Time • Small steps, big grades.",
-    "🗳️ Supporter theme • Unlock more with /vote",
-    "⏳ Deadline Energy • Start early, finish calm.",
-]
-
-THEMES["spooky"]["footer_pool"] = [
-    "🎃 Spooky • The clock creaks… closer.",
-    "🕯️ Witching Hour • /chronohelp for commands",
-    "🕸️ Cobweb Calendar • Don’t get caught in the delay.",
-    "👻 Haunted Schedule • Time is… watching.",
-    "🗳️ Supporter theme • Unlock more with /vote",
-    "🦇 Midnight Mode • The countdown stirs.",
-]
-
 # Full 14-theme registry (Chrono Purple Classic is the default + always available)
 # Keys are the canonical theme IDs you’ll reference in guild_state["theme"] / /settheme.
 
@@ -2127,6 +1988,134 @@ _THEME_LABELS: Dict[str, str] = {
     "school": "School 📚",
     "spooky": "Spooky 🎃",
 }
+
+# ---- THEME FOOTER POOLS (must come AFTER THEMES is defined) ----
+FOOTER_POOLS: Dict[str, List[str]] = {
+    "classic": [
+        "💜 Chrono Purple • /chronohelp",
+        "⏳ ChronoBot • Time is fake. Reminders are real.",
+        "✨ ChronoBot • Keeping your chaos on a schedule.",
+        "🕒 ChronoBot • One timeline to rule them all.",
+        "🗳️ Supporter themes unlock with /vote",
+        "📌 Tip: Use /theme anytime to swap vibes.",
+    ],
+    "football": [
+        "🏈 Game Day • No timeouts on time.",
+        "⏱️ Play Clock • Counting down to kickoff.",
+        "📣 Sideline Report • /chronohelp for commands",
+        "🔥 Huddle Up • Big plays need good planning.",
+        "🗳️ Supporter theme • Unlock more with /vote",
+        "🏟️ Stadium Mode • Keep your schedule in-bounds.",
+    ],
+    "basketball": [
+        "🏀 Tip-Off • The shot clock is always running.",
+        "⏱️ Shot Clock • Scheduling like a pro.",
+        "🔥 Clutch Time • Don’t leave it to overtime.",
+        "📣 Courtside • /chronohelp for commands",
+        "🗳️ Supporter theme • Unlock more with /vote",
+        "🏟️ Arena Lights • Next up on the board…",
+    ],
+    "baseball": [
+        "⚾ On Deck • First pitch is coming.",
+        "🧢 Dugout Notes • Keep your dates in the lineup.",
+        "🏟️ Ballpark Board • /chronohelp for commands",
+        "🔥 Extra Innings • Planning beats panic.",
+        "🗳️ Supporter theme • Unlock more with /vote",
+        "🧤 Diamond Time • Don’t get caught off-base.",
+    ],
+    "raidnight": [
+        "🎮 Raid Night • Ready check in progress.",
+        "🛡️ Party Finder • Don’t be late to the pull.",
+        "⚔️ Pull Timer • We go when the timer hits zero.",
+        "🧩 Objective HUD • /chronohelp for commands",
+        "🗳️ Supporter theme • Unlock more with /vote",
+        "🏆 Loot Council • Timers > excuses.",
+    ],
+    "dnd": [
+        "🎲 Campaign Night • Roll initiative… later.",
+        "🐉 DM Notes • Respect the schedule, fear the dragon.",
+        "📜 The Next Chapter • /chronohelp for commands",
+        "🕯️ Tavern Board • Arrive on time, get inspiration.",
+        "🗳️ Supporter theme • Unlock more with /vote",
+        "🗺️ Quest Log • Side quests welcome. Missed sessions? Not so much.",
+    ],
+    "girly": [
+        "🎀 Cute Aesthetic • Tiny plans, big sparkle.",
+        "💖 Soft Schedule • Your calendar, but make it cute.",
+        "✨ Pretty Timing • /chronohelp for commands",
+        "🌸 Sweet Reminder • Future-you says thank you.",
+        "🗳️ Supporter theme • Unlock more with /vote",
+        "🫧 Sparkle Mode • Countdowns with character.",
+    ],
+    "workplace": [
+        "📌 Workplace Ops • Clear dates, clean execution.",
+        "🗓️ Operations Board • /chronohelp for commands",
+        "✅ Action Items • Planning beats firefighting.",
+        "📋 Timeline View • Keep the machine humming.",
+        "🗳️ Supporter theme • Unlock more with /vote",
+        "⏱️ On Schedule • Meetings don’t wait.",
+    ],
+    "celebration": [
+        "🎉 Celebration • Confetti pending…",
+        "🎊 Party Board • Don’t forget the good stuff.",
+        "🥳 Good Times Ahead • /chronohelp for commands",
+        "🍾 Pop Soon • The countdown is part of the fun.",
+        "🗳️ Supporter theme • Unlock more with /vote",
+        "✨ Big Moment • Make it legendary.",
+    ],
+    "romance": [
+        "💞 Romance • Soft plans, strong intentions.",
+        "🌹 Date Night • /chronohelp for commands",
+        "💌 Love Notes • Keep the magic on the calendar.",
+        "🕯️ Candlelight Mode • Timing is part of the spell.",
+        "🗳️ Supporter theme • Unlock more with /vote",
+        "🍷 Sweet Timing • Don’t be late to your own moment.",
+    ],
+    "vacation": [
+        "🧳 Vacation • Out of office (emotionally).",
+        "✈️ Departures • /chronohelp for commands",
+        "🌴 Getaway Mode • Countdown to freedom.",
+        "🗺️ Travel Board • Future-you is already packing.",
+        "🗳️ Supporter theme • Unlock more with /vote",
+        "🏖️ Beach Brain • The trip starts when you plan it.",
+    ],
+    "hype": [
+        "🚀 Hype Mode • Main character scheduling.",
+        "🔥 Big Energy • /chronohelp for commands",
+        "⚡ Incoming • Don’t blink — it’s soon.",
+        "🎉 Countdown Heat • We love a dramatic timer.",
+        "🗳️ Supporter theme • Unlock more with /vote",
+        "💥 Let’s Go • Future you is screaming.",
+    ],
+    "minimal": [
+        "• Minimal • /chronohelp",
+        "⏱️ Simple timers. Clean schedule.",
+        "▫️ Less clutter. More clarity.",
+        "• Planning > panic.",
+        "🗳️ Supporter theme • Unlock more with /vote",
+        "• ChronoBot • Quietly keeping time.",
+    ],
+    "school": [
+        "📚 School • Study now, celebrate later.",
+        "📝 Syllabus Mode • /chronohelp for commands",
+        "✅ Prep Checklist • Due dates don’t negotiate.",
+        "🧠 Focus Time • Small steps, big grades.",
+        "🗳️ Supporter theme • Unlock more with /vote",
+        "⏳ Deadline Energy • Start early, finish calm.",
+    ],
+    "spooky": [
+        "🎃 Spooky • The clock creaks… closer.",
+        "🕯️ Witching Hour • /chronohelp for commands",
+        "🕸️ Cobweb Calendar • Don’t get caught in the delay.",
+        "👻 Haunted Schedule • Time is… watching.",
+        "🗳️ Supporter theme • Unlock more with /vote",
+        "🦇 Midnight Mode • The countdown stirs.",
+    ],
+}
+
+for theme_id, pool in FOOTER_POOLS.items():
+    if theme_id in THEMES:
+        THEMES[theme_id]["footer_pool"] = pool
 
 def normalize_theme_key(raw: Optional[str]) -> str:
     t = (raw or DEFAULT_THEME_ID).strip().lower()
