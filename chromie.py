@@ -389,6 +389,9 @@ def prune_past_events(guild_state: dict, now: Optional[datetime] = None) -> int:
     if now is None:
         now = datetime.now(DEFAULT_TZ)
 
+    # Keep window must be at least the start-blast grace window
+    keep_seconds = max(STARTED_EVENT_KEEP_SECONDS, EVENT_START_GRACE_SECONDS)
+
     sort_events(guild_state)
     events = guild_state.get("events", [])
     if not isinstance(events, list) or not events:
@@ -412,10 +415,7 @@ def prune_past_events(guild_state: dict, now: Optional[datetime] = None) -> int:
 
         if dt <= now:
             age = (now - dt).total_seconds()
-
-            # ✅ Keep it for a while after start (regardless of start_announced)
-            # This prevents “start blast -> immediate prune” in the same cycle.
-            if age <= STARTED_EVENT_KEEP_SECONDS:
+            if age <= keep_seconds:
                 kept.append(ev)
             else:
                 removed += 1
@@ -427,7 +427,6 @@ def prune_past_events(guild_state: dict, now: Optional[datetime] = None) -> int:
         sort_events(guild_state)
 
     return removed
-
 
 # ==========================
 # DISCORD SETUP
@@ -1113,9 +1112,9 @@ def build_embed_for_guild(guild_state: dict) -> discord.Embed:
         return embed
 
     now_dt = datetime.now(DEFAULT_TZ)
-
-    # Upcoming only
+    live_now: list[tuple[dict, datetime]] = []
     upcoming: list[tuple[dict, datetime]] = []
+
     for ev in events:
         ts = ev.get("timestamp")
         if not isinstance(ts, int):
@@ -1124,10 +1123,38 @@ def build_embed_for_guild(guild_state: dict) -> discord.Embed:
             dt = datetime.fromtimestamp(ts, tz=DEFAULT_TZ)
         except Exception:
             continue
-        if dt <= now_dt:
-            continue
-        upcoming.append((ev, dt))
 
+        if dt <= now_dt:
+            age = (now_dt - dt).total_seconds()
+            if age <= STARTED_EVENT_KEEP_SECONDS:
+                live_now.append((ev, dt))
+        else:
+            upcoming.append((ev, dt))
+    live_now.sort(key=lambda t: t[1], reverse=True)
+    upcoming.sort(key=lambda t: t[1])
+        
+    # ✅ Add LIVE NOW section ONCE (after classification loop)
+    if live_now:
+        lines = []
+        for ev, dt in live_now[:5]:
+            ts = int(ev["timestamp"])
+            rel = f"<t:{ts}:R>"  # "x minutes ago"
+            full = f"<t:{ts}:F>"
+            name = (ev.get("name", "Event") or "Event").strip()
+            lines.append(f"• **{name}** — started {rel}\n  {full}")
+
+        extra = ""
+        if len(live_now) > 5:
+            extra = f"\n… and {len(live_now) - 5} more live event(s)."
+
+        embed.add_field(
+            name="🔴 LIVE NOW",
+            value=("\n".join(lines) + extra)[:1024],
+            inline=False,
+        )
+
+    # ✅ If there are no upcoming events, you can still return,
+    # but now LIVE NOW will already be shown above.
     if not upcoming:
         embed.add_field(
             name="No upcoming events",
@@ -1136,6 +1163,7 @@ def build_embed_for_guild(guild_state: dict) -> discord.Embed:
         )
         embed.set_footer(text=_append_vote_footer("No upcoming events."))
         return embed
+        
 
     # Banner (first event with a banner wins)
     for ev, _dt in upcoming:
