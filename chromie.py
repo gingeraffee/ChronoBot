@@ -1,5 +1,6 @@
 import os
 import json
+import traceback
 from pathlib import Path
 from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
@@ -3068,26 +3069,38 @@ async def update_countdowns():
                 # (No immediate flush needed; no public post happened.)
 
             # ---- Update pinned embed once at end (reflects changes) ----
-            pinned = await get_or_create_pinned_message(guild_id, channel, allow_create=True)
+            try:
+                pinned = await get_or_create_pinned_message(guild_id, channel, allow_create=True)
+            except Exception:
+                print(f"[Guild {guild_id}] get_or_create_pinned_message failed:\n{traceback.format_exc()}")
+                pinned = None
+
             if pinned is not None:
                 try:
-                    await pinned.edit(embed=build_embed_for_guild(guild_state))
-                except discord.NotFound:
-                    gs = get_guild_state(guild_id)
-                    if gs.get("pinned_message_id") == pinned.id:
-                        gs["pinned_message_id"] = None
-                        mark_dirty()
-                        flush_if_dirty()  # this one is worth flushing quickly
-                except discord.Forbidden:
-                    missing = missing_channel_perms(channel, channel.guild)
-                    await notify_owner_missing_perms(
-                        channel.guild,
-                        channel,
-                        missing=missing,
-                        action="edit/update the pinned countdown message",
-                    )
-                except discord.HTTPException as e:
-                    print(f"[Guild {guild_id}] Failed to edit pinned message: {e}")
+                    embed = build_embed_for_guild(guild_state)
+                except Exception:
+                    print(f"[Guild {guild_id}] build_embed_for_guild failed:\n{traceback.format_exc()}")
+                    embed = None
+
+                if embed is not None:
+                    try:
+                        await pinned.edit(embed=embed)
+                    except discord.NotFound:
+                        gs = get_guild_state(guild_id)
+                        if gs.get("pinned_message_id") == pinned.id:
+                            gs["pinned_message_id"] = None
+                            mark_dirty()
+                            flush_if_dirty()  # worth flushing quickly
+                    except discord.Forbidden:
+                        missing = missing_channel_perms(channel, channel.guild)
+                        await notify_owner_missing_perms(
+                            channel.guild,
+                            channel,
+                            missing=missing,
+                            action="edit/update the pinned countdown message",
+                        )
+                    except discord.HTTPException as e:
+                        print(f"[Guild {guild_id}] Failed to edit pinned message: {e}")
 
             # ✅ Final flush: saves prune/anchor fixes/etc once per guild cycle
             flush_if_dirty()
