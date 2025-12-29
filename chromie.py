@@ -1433,23 +1433,12 @@ def build_start_blast_message(guild_state: dict, *, event_name: str) -> str:
 
 
 def build_embed_for_guild(guild_state: dict) -> discord.Embed:
-    """
-    Build the pinned countdown embed for a guild.
-
-    Design goals:
-    - Compact: one line per event (no spacer fields).
-    - No event owner/creator in the pinned message (reserve space for event info).
-    - Theme-aware emoji + vibe.
-    """
     theme_id, profile = get_theme_profile(guild_state)
 
-    seed = str(guild_state.get("event_channel_id") or guild_state.get("guild_id") or "0")
+    seed = str(guild_state.get("event_channel_id") or "0")
     title = pick_title(theme_id, profile, seed=seed)
 
-    embed = discord.Embed(
-        title=title,
-        color=profile.get("color", EMBED_COLOR),
-    )
+    embed = discord.Embed(title=title, color=profile.get("color", EMBED_COLOR))
 
     events = guild_state.get("events", []) or []
     if not events:
@@ -1458,65 +1447,57 @@ def build_embed_for_guild(guild_state: dict) -> discord.Embed:
         return embed
 
     now = datetime.now(DEFAULT_TZ)
-    grace = timedelta(hours=PASSED_EVENT_GRACE_HOURS)
+    grace = timedelta(seconds=EVENT_START_GRACE_SECONDS)
 
-    # Sort events by timestamp (backstop; events are usually already sorted)
-    items: List[Tuple[datetime, dict]] = []
-    for ev in events:
-        try:
-            dt = datetime.fromisoformat(ev["when"])
-        except Exception:
-            continue
-        items.append((dt, ev))
-    items.sort(key=lambda x: x[0])
+    # sort by timestamp
+    events_sorted = sorted(
+        [ev for ev in events if isinstance(ev, dict)],
+        key=lambda ev: ev.get("timestamp", 0) if isinstance(ev.get("timestamp"), int) else 0
+    )
 
     lines: List[str] = []
-    first_upcoming_name: Optional[str] = None
+    first_upcoming_banner: Optional[str] = None
 
-    for dt, ev in items:
-        name = (ev.get("name") or "Untitled").strip()
-        ts = int(dt.timestamp())
+    for ev in events_sorted:
+        ts = ev.get("timestamp")
+        if not isinstance(ts, int):
+            continue
+
+        dt = datetime.fromtimestamp(ts, tz=DEFAULT_TZ)
+
         is_live = dt <= now <= (dt + grace)
         is_past = dt < (now - grace)
-
-        # Skip old past events (they should also get pruned elsewhere)
         if is_past:
             continue
 
-        if first_upcoming_name is None and dt >= now:
-            first_upcoming_name = name
+        name = (ev.get("name") or "Untitled").strip()
+
+        if first_upcoming_banner is None and dt >= now:
+            b = ev.get("banner_url")
+            if isinstance(b, str) and b.strip():
+                first_upcoming_banner = b.strip()
 
         emoji = pick_event_emoji(theme_id, profile, seed=f"{ts}|{name}")
 
         tags: List[str] = []
-        if ev.get("repeat_every"):
-            try:
-                tags.append(f"🔁{int(ev['repeat_every'])}d")
-            except Exception:
-                tags.append("🔁")
+        repeat_every = ev.get("repeat_every_days")
+        if isinstance(repeat_every, int) and repeat_every > 0:
+            tags.append(f"🔁{repeat_every}d")
         if ev.get("silenced"):
             tags.append("🔕")
 
         tag_str = ("  " + " ".join(tags)) if tags else ""
         base = f"{emoji} **{name}** — <t:{ts}:F> • <t:{ts}:R>{tag_str}"
-        line = f"🔴 {base}" if is_live else base
-        lines.append(line)
+        lines.append(f"🔴 {base}" if is_live else base)
 
-    # Safety: keep within embed description limit
-    desc = "\n".join(lines).strip()
-    if len(desc) > 4000:
-        desc = desc[:3990] + "…"
+    embed.description = ("\n".join(lines)[:3990] + "…") if len("\n".join(lines)) > 4000 else "\n".join(lines)
 
-    embed.description = desc
-
-    # Optional banner based on the next upcoming event name (if configured)
-    if first_upcoming_name:
-        banner_url = pick_banner_for_event(first_upcoming_name)
-        if banner_url:
-            embed.set_image(url=banner_url)
+    if first_upcoming_banner:
+        embed.set_image(url=first_upcoming_banner)
 
     embed.set_footer(text=_append_vote_footer(f"Theme: {_THEME_LABELS.get(theme_id, theme_id.title())}"))
     return embed
+
 
 async def rebuild_pinned_message(guild_id: int, channel: discord.TextChannel, guild_state: dict):
     sort_events(guild_state)
