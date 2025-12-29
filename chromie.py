@@ -2350,6 +2350,8 @@ def build_embed_for_guild(guild_state: dict) -> discord.Embed:
 
     # (optional) if you want to avoid mutating shared dicts while iterating
     events = list(events)
+    dt = datetime.fromtimestamp(ts, tz=DEFAULT_TZ)
+    now = datetime.now(DEFAULT_TZ)
     
     override_title = (guild_state.get("countdown_title_override") or "").strip()
     embed_title = override_title[:256] if override_title else layout.get("title", "Event Countdown")
