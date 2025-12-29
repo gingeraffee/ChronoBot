@@ -1037,79 +1037,52 @@ def chunk_text(text: str, limit: int = 1900) -> list[str]:
         chunks.append(text)
     return chunks
 
-def build_embed_for_guild(guild_state: dict) -> discord.Embed:
+def build_embed_for_guild(guild_state: dict):
     sort_events(guild_state)
     events = guild_state.get("events", [])
-    raw_theme = (guild_state.get("theme") or "default").lower()
-    theme = normalize_theme_key(raw_theme)
-
-    SPACER = "\u200b"  # zero-width space line for “padding” in embeds
-
-    # One accent color per embed — Discord rule
-    THEME_PROFILES = {
-        "default": {
-            "title": "Upcoming Event Countdowns",
-            "description": "Live countdowns for this server’s events.",
-            "color": EMBED_COLOR,
-            "mode": "fields",
-        },
-        "gaming": {
-            "title": "🎮 Party Queue",
-            "description": "Next up: objectives, chaos, and questionable snack decisions.",
-            "color": discord.Color.from_rgb(88, 101, 242),  # blurple-ish
-            "mode": "fields",
-        },
-        "arcade": {
-            "title": "🕹️ INSERT COIN",
-            "description": "High-score timekeeping. No continues.",
-            "color": discord.Color.from_rgb(0, 255, 170),   # neon mint
-            "mode": "fields",
-        },
-        "hypebeast": {
-            "title": "💎 NEXT DROP TIMER",
-            "description": "Limited time. Unlimited drip.",
-            "color": discord.Color.from_rgb(20, 20, 20),    # near-black
-            "mode": "fields",
-        },
-        "minimalist": {
-            "title": "Event Countdowns",
-            "description": "Upcoming events.",
-            "color": discord.Color.from_rgb(180, 180, 180),
-            "mode": "list",  # cleaner in one list
-        },
-        "cutesy": {
-            "title": "🧸 Cozy Countdown Corner",
-            "description": "Tiny reminders with big sparkle energy.",
-            "color": discord.Color.from_rgb(255, 140, 200),  # pink
-            "mode": "fields",
-        },
-        "celebration": {
-            "title": "🎉 Countdown Party Board",
-            "description": "Confetti preloaded. Timing immaculate.",
-            "color": discord.Color.from_rgb(255, 195, 0),    # gold
-            "mode": "fields",
-        },
-        "spooky": {
-            "title": "🕯️ The Haunted Countdown",
-            "description": "The clock whispers… your event approaches.",
-            "color": discord.Color.from_rgb(120, 60, 200),   # purple
-            "mode": "fields",
-        },
-    }
-
-    profile = THEME_PROFILES.get(theme, THEME_PROFILES["default"])
 
     embed = discord.Embed(
-        title=profile["title"],
-        description=profile["description"],
-        color=profile["color"],
+        title="Upcoming Event Countdowns",
+        color=EMBED_COLOR,
     )
-    embed.timestamp = datetime.now(DEFAULT_TZ)
 
-    if not isinstance(events, list) or not events:
-        embed.add_field(name="No upcoming events", value="Use `/addevent` to add one.", inline=False)
-        embed.set_footer(text=_append_vote_footer("No events to display."))
+    if not events:
+        embed.description = "No events yet. Use `/addevent` to add one."
         return embed
+
+    lines: list[str] = []
+    any_upcoming = False
+
+    for ev in events:
+        dt = datetime.fromtimestamp(ev["timestamp"], tz=DEFAULT_TZ)
+        desc, days_left, passed = compute_time_left(dt)
+
+        # Shorter date format to save space
+        date_str = dt.strftime("%b %d, %Y • %I:%M %p %Z").replace(" 0", " ")
+
+        if passed:
+            lines.append(f"**{ev['name']}** — {date_str} — 🎉 started/passed")
+        else:
+            any_upcoming = True
+            lines.append(f"**{ev['name']}** — {date_str} — ⏱ **{desc}** left")
+
+    # Discord embed descriptions have a max length (4096). Keep a safety buffer.
+    max_len = 3900
+    desc_text = ""
+    for line in lines:
+        candidate = f"{desc_text}\n{line}" if desc_text else line
+        if len(candidate) > max_len:
+            desc_text += "\n… *(more events omitted)*"
+            break
+        desc_text = candidate
+
+    embed.description = desc_text
+
+    if not any_upcoming:
+        embed.set_footer(text="All listed events have already started or passed.")
+
+    return embed
+
 
     now_dt = datetime.now(DEFAULT_TZ)
     live_now: list[tuple[dict, datetime]] = []
