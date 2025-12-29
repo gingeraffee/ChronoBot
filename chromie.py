@@ -1069,6 +1069,156 @@ THEME_ALIASES: Dict[str, str] = {
     "spooky": "spooky",
 }
 
+DEFAULT_FOOTER_POOL = [
+    "⏳ ChronoBot • Time is fake, deadlines are real.",
+    "💫 ChronoBot • Tip: /chronohelp for commands",
+    "🗳️ Supporter themes unlock with /vote",
+]
+
+def pick_theme_footer(theme_id: str, profile: Dict[str, Any], *, seed: str) -> str:
+    pool = profile.get("footer_pool") or DEFAULT_FOOTER_POOL
+    label = profile.get("label", theme_id.title())
+    text = _stable_pick(pool, f"{theme_id}|footer|{seed}")
+    return text.replace("{label}", label)
+
+
+# ---- THEME FOOTERS ----
+# Add these to each theme: THEMES["key"]["footer_pool"] = [...]
+
+THEMES["classic"]["footer_pool"] = [
+    "💜 Chrono Purple • /chronohelp",
+    "⏳ ChronoBot • Time is fake. Reminders are real.",
+    "✨ ChronoBot • Keeping your chaos on a schedule.",
+    "🕒 ChronoBot • One timeline to rule them all.",
+    "🗳️ Supporter themes unlock with /vote",
+    "📌 Tip: Use /theme anytime to swap vibes.",
+]
+
+THEMES["football"]["footer_pool"] = [
+    "🏈 Game Day • No timeouts on time.",
+    "⏱️ Play Clock • Counting down to kickoff.",
+    "📣 Sideline Report • /chronohelp for commands",
+    "🔥 Huddle Up • Big plays need good planning.",
+    "🗳️ Supporter theme • Unlock more with /vote",
+    "🏟️ Stadium Mode • Keep your schedule in-bounds.",
+]
+
+THEMES["basketball"]["footer_pool"] = [
+    "🏀 Tip-Off • The shot clock is always running.",
+    "⏱️ Shot Clock • Scheduling like a pro.",
+    "🔥 Clutch Time • Don’t leave it to overtime.",
+    "📣 Courtside • /chronohelp for commands",
+    "🗳️ Supporter theme • Unlock more with /vote",
+    "🏟️ Arena Lights • Next up on the board…",
+]
+
+THEMES["baseball"]["footer_pool"] = [
+    "⚾ On Deck • First pitch is coming.",
+    "🧢 Dugout Notes • Keep your dates in the lineup.",
+    "🏟️ Ballpark Board • /chronohelp for commands",
+    "🔥 Extra Innings • Planning beats panic.",
+    "🗳️ Supporter theme • Unlock more with /vote",
+    "🧤 Diamond Time • Don’t get caught off-base.",
+]
+
+THEMES["raidnight"]["footer_pool"] = [
+    "🎮 Raid Night • Ready check in progress.",
+    "🛡️ Party Finder • Don’t be late to the pull.",
+    "⚔️ Pull Timer • We go when the timer hits zero.",
+    "🧩 Objective HUD • /chronohelp for commands",
+    "🗳️ Supporter theme • Unlock more with /vote",
+    "🏆 Loot Council • Timers > excuses.",
+]
+
+THEMES["dnd"]["footer_pool"] = [
+    "🎲 Campaign Night • Roll initiative… later.",
+    "🐉 DM Notes • Respect the schedule, fear the dragon.",
+    "📜 The Next Chapter • /chronohelp for commands",
+    "🕯️ Tavern Board • Arrive on time, get inspiration.",
+    "🗳️ Supporter theme • Unlock more with /vote",
+    "🗺️ Quest Log • Side quests welcome. Missed sessions? Not so much.",
+]
+
+THEMES["girly"]["footer_pool"] = [
+    "🎀 Cute Aesthetic • Tiny plans, big sparkle.",
+    "💖 Soft Schedule • Your calendar, but make it cute.",
+    "✨ Pretty Timing • /chronohelp for commands",
+    "🌸 Sweet Reminder • Future-you says thank you.",
+    "🗳️ Supporter theme • Unlock more with /vote",
+    "🫧 Sparkle Mode • Countdowns with character.",
+]
+
+THEMES["workplace"]["footer_pool"] = [
+    "📌 Workplace Ops • Clear dates, clean execution.",
+    "🗓️ Operations Board • /chronohelp for commands",
+    "✅ Action Items • Planning beats firefighting.",
+    "📋 Timeline View • Keep the machine humming.",
+    "🗳️ Supporter theme • Unlock more with /vote",
+    "⏱️ On Schedule • Meetings don’t wait.",
+]
+
+THEMES["celebration"]["footer_pool"] = [
+    "🎉 Celebration • Confetti pending…",
+    "🎊 Party Board • Don’t forget the good stuff.",
+    "🥳 Good Times Ahead • /chronohelp for commands",
+    "🍾 Pop Soon • The countdown is part of the fun.",
+    "🗳️ Supporter theme • Unlock more with /vote",
+    "✨ Big Moment • Make it legendary.",
+]
+
+THEMES["romance"]["footer_pool"] = [
+    "💞 Romance • Soft plans, strong intentions.",
+    "🌹 Date Night • /chronohelp for commands",
+    "💌 Love Notes • Keep the magic on the calendar.",
+    "🕯️ Candlelight Mode • Timing is part of the spell.",
+    "🗳️ Supporter theme • Unlock more with /vote",
+    "🍷 Sweet Timing • Don’t be late to your own moment.",
+]
+
+THEMES["vacation"]["footer_pool"] = [
+    "🧳 Vacation • Out of office (emotionally).",
+    "✈️ Departures • /chronohelp for commands",
+    "🌴 Getaway Mode • Countdown to freedom.",
+    "🗺️ Travel Board • Future-you is already packing.",
+    "🗳️ Supporter theme • Unlock more with /vote",
+    "🏖️ Beach Brain • The trip starts when you plan it.",
+]
+
+THEMES["hype"]["footer_pool"] = [
+    "🚀 Hype Mode • Main character scheduling.",
+    "🔥 Big Energy • /chronohelp for commands",
+    "⚡ Incoming • Don’t blink — it’s soon.",
+    "🎉 Countdown Heat • We love a dramatic timer.",
+    "🗳️ Supporter theme • Unlock more with /vote",
+    "💥 Let’s Go • Future you is screaming.",
+]
+
+THEMES["minimal"]["footer_pool"] = [
+    "• Minimal • /chronohelp",
+    "⏱️ Simple timers. Clean schedule.",
+    "▫️ Less clutter. More clarity.",
+    "• Planning > panic.",
+    "🗳️ Supporter theme • Unlock more with /vote",
+    "• ChronoBot • Quietly keeping time.",
+]
+
+THEMES["school"]["footer_pool"] = [
+    "📚 School • Study now, celebrate later.",
+    "📝 Syllabus Mode • /chronohelp for commands",
+    "✅ Prep Checklist • Due dates don’t negotiate.",
+    "🧠 Focus Time • Small steps, big grades.",
+    "🗳️ Supporter theme • Unlock more with /vote",
+    "⏳ Deadline Energy • Start early, finish calm.",
+]
+
+THEMES["spooky"]["footer_pool"] = [
+    "🎃 Spooky • The clock creaks… closer.",
+    "🕯️ Witching Hour • /chronohelp for commands",
+    "🕸️ Cobweb Calendar • Don’t get caught in the delay.",
+    "👻 Haunted Schedule • Time is… watching.",
+    "🗳️ Supporter theme • Unlock more with /vote",
+    "🦇 Midnight Mode • The countdown stirs.",
+]
 
 # Full 14-theme registry (Chrono Purple Classic is the default + always available)
 # Keys are the canonical theme IDs you’ll reference in guild_state["theme"] / /settheme.
@@ -2070,7 +2220,7 @@ def build_embed_for_guild(guild_state: dict) -> discord.Embed:
 
     now = datetime.now(DEFAULT_TZ)
     grace = timedelta(seconds=EVENT_START_GRACE_SECONDS)
-
+    footer_text = pick_theme_footer(theme_id, profile, seed=seed)
     events_sorted = sorted(
         [ev for ev in events if isinstance(ev, dict)],
         key=lambda ev: ev.get("timestamp", 0) if isinstance(ev.get("timestamp"), int) else 0
@@ -2127,18 +2277,8 @@ def build_embed_for_guild(guild_state: dict) -> discord.Embed:
 
     if first_upcoming_banner:
         embed.set_image(url=first_upcoming_banner)
-        
-    desc_override = guild_state.get("countdown_description_override")
-    if isinstance(desc_override, str) and desc_override.strip():
-        # Prepend override above the event list
-        prefix = desc_override.strip()
-        if embed.description:
-            combined = prefix + "\n\n" + embed.description
-        else:
-            combined = prefix
-        embed.description = combined[:4096]  # Discord description limit
 
-    embed.set_footer(text=_append_vote_footer(f"Theme: {_THEME_LABELS.get(theme_id, theme_id.title())}"))
+    embed.set_footer(text=_append_vote_footer(footer_text))
     return embed
 
 async def rebuild_pinned_message(guild_id: int, channel: discord.TextChannel, guild_state: dict):
@@ -2218,6 +2358,8 @@ async def get_or_create_pinned_message(
         )
         return None
 
+    # If creating, we can still create WITHOUT read_message_history.
+    # We only need manage_messages to pin/unpin, embed_links to display nicely.
     if allow_create:
         needed = []
         if not perms.embed_links:
@@ -2231,20 +2373,19 @@ async def get_or_create_pinned_message(
                 missing=needed,
                 action="pin + display the countdown embed",
             )
+        # IMPORTANT: do NOT return here. Missing perms may degrade features,
+        # but we can still try to send/update.
 
-    # =========================
-    # 1) Use saved pinned ID if we have it
-    # =========================
+    # -------------------------
+    # 1) If we have a saved pinned ID:
+    # -------------------------
     if pinned_id:
+        # ✅ If we can't read history, we can still edit by ID using a PartialMessage
         if not perms.read_message_history:
-            missing = missing_channel_perms(channel, channel.guild)
-            await notify_owner_missing_perms(
-                channel.guild,
-                channel,
-                missing=missing,
-                action="read message history to access/update the pinned countdown message",
-            )
-            return None
+            try:
+                return channel.get_partial_message(int(pinned_id))
+            except Exception:
+                return None
 
         try:
             msg = await channel.fetch_message(int(pinned_id))
@@ -2266,26 +2407,12 @@ async def get_or_create_pinned_message(
         except discord.HTTPException:
             return None
 
-    # =========================
-    # ✅ NEW: Recovery — reuse an existing bot-authored pinned message in this channel
-    # This prevents “pin spam” when pinned_message_id gets lost/reset.
-    # =========================
-    if not pinned_id:
-        if not perms.read_message_history:
-            if allow_create:
-                missing = missing_channel_perms(channel, channel.guild)
-                await notify_owner_missing_perms(
-                    channel.guild,
-                    channel,
-                    missing=missing,
-                    action="read message history to find and reuse the existing pinned countdown message",
-                )
-            return None
-
+    # -------------------------
+    # 2) Recovery (ONLY if we can read history)
+    # -------------------------
+    if not pinned_id and perms.read_message_history:
         try:
             pins = [m async for m in channel.pins()]
-
-            # Prefer the most recent pinned message authored by the bot
             bot_pins = [m for m in pins if m.author and m.author.id == bot_member.id]
             if bot_pins:
                 m = max(bot_pins, key=lambda x: x.created_at)
@@ -2293,7 +2420,6 @@ async def get_or_create_pinned_message(
                 save_state()
                 await ensure_countdown_pinned(channel.guild, channel, m, perms=perms)
                 return m
-
         except discord.Forbidden:
             missing = missing_channel_perms(channel, channel.guild)
             await notify_owner_missing_perms(
@@ -2302,13 +2428,14 @@ async def get_or_create_pinned_message(
                 missing=missing,
                 action="access pinned messages to reuse the existing countdown pin",
             )
-            return None
+            # Fall through to create if allowed
         except discord.HTTPException:
-            return None
+            # Fall through to create if allowed
+            pass
 
-    # =========================
-    # 2) Create only if we truly have nothing to reuse
-    # =========================
+    # -------------------------
+    # 3) Create (even if we can't read history)
+    # -------------------------
     if not allow_create:
         return None
 
@@ -2317,8 +2444,7 @@ async def get_or_create_pinned_message(
         msg = await channel.send(embed=embed)
         await ensure_countdown_pinned(channel.guild, channel, msg, perms=perms)
 
-        # ✅ NEW (optional but helpful): if you have Manage Messages,
-        # unpin older bot pins so only one remains.
+        # Cleanup old bot pins only if we can read history AND manage pins
         if perms.manage_messages and perms.read_message_history:
             try:
                 pins = await channel.pins()
