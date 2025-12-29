@@ -2301,15 +2301,22 @@ THEME_LAYOUTS = {
     },
 }
 
-def get_theme_layout(guild_state: dict) -> dict:
-    theme_id = (guild_state.get("theme") or "classic").lower()
+def get_theme_layout(guild_state: dict, theme_id: Optional[str] = None) -> dict:
+    # Support older call sites that passed (theme_id, guild_state)
+    # If someone accidentally passes guild_state as the 2nd arg, this still behaves.
+    if theme_id and isinstance(theme_id, dict):
+        # called as get_theme_layout(theme_id_dict??) - just fall back
+        theme_id = None
 
-    # Get the theme layout or fall back to classic
-    layout = THEME_LAYOUTS.get(theme_id, THEME_LAYOUTS["classic"]).copy()
+    tid = (theme_id or guild_state.get("theme") or "classic")
+    tid = str(tid).lower()
+
+    layout = THEME_LAYOUTS.get(tid, THEME_LAYOUTS["classic"]).copy()
 
     # Guarantee required keys exist
     layout.setdefault("title", "Event Countdown")
-    layout.setdefault("description", "")
+    layout.setdefault("subtitle", "")
+    layout.setdefault("footer", "")
     layout.setdefault("emoji", "🕒")
     layout.setdefault("color", EMBED_COLOR)
 
@@ -2350,7 +2357,6 @@ def build_embed_for_guild(guild_state: dict) -> discord.Embed:
 
     # (optional) if you want to avoid mutating shared dicts while iterating
     events = list(events)
-    dt = datetime.fromtimestamp(ts, tz=DEFAULT_TZ)
     now = datetime.now(DEFAULT_TZ)
     
     override_title = (guild_state.get("countdown_title_override") or "").strip()
@@ -2386,12 +2392,14 @@ def build_embed_for_guild(guild_state: dict) -> discord.Embed:
             f"📅 {dt.strftime('%B %d, %Y • %I:%M %p %Z')}",
         ]
 
-        owner_id = ev.get("owner_id")
-        owner_tag = ev.get("owner_tag")
-        if owner_id:
+        owner_id = ev.get("owner_user_id")
+        owner_name = ev.get("owner_name")
+
+        if isinstance(owner_id, int) and owner_id > 0:
             lines.append(f"👤 Hosted by <@{owner_id}>")
-        elif owner_tag:
-            lines.append(f"👤 Hosted by {owner_tag}")
+        elif isinstance(owner_name, str) and owner_name.strip():
+            lines.append(f"👤 Hosted by {owner_name.strip()}")
+
 
         blocks.append("\n".join(lines))
 
@@ -3197,7 +3205,8 @@ def format_events_list(guild_state: dict) -> str:
             continue
 
         dt = datetime.fromtimestamp(ts, tz=DEFAULT_TZ)
-        desc, _, passed = compute_time_left(dt)
+        now = datetime.now(DEFAULT_TZ)
+        desc, _, passed = compute_time_left(now, dt)
         status = "✅ done" if passed else "⏳ active"
 
         repeat_every = ev.get("repeat_every_days")
