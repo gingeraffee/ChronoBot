@@ -2180,7 +2180,6 @@ def build_start_blast_message(guild_state: dict, *, event_name: str) -> str:
 
 # ==========================
 # UNIFIED THEME VISUAL LAYOUTS
-# (title, subtitle, footer, color)
 # ==========================
 
 THEME_LAYOUTS = {
@@ -2188,93 +2187,113 @@ THEME_LAYOUTS = {
         "title": "⏳ Chrono Countdown Board",
         "subtitle": "Timelines woven in Chrono purple.",
         "footer": "Updated every minute • Time is fake, reminders are real",
-        "color": discord.Color.from_rgb(140, 82, 255),  # Chrono purple
+        "color": discord.Color.from_rgb(140, 82, 255),
+        "emoji": "🕒",
     },
     "football": {
         "title": "🏈 Game Day Countdown Board",
         "subtitle": "Next kickoffs on the schedule.",
         "footer": "Updated every minute • Timeouts are imaginary",
-        "color": discord.Color.from_rgb(31, 139, 76),  # Turf green
+        "color": discord.Color.from_rgb(31, 139, 76),
+        "emoji": "🏟️",
     },
     "basketball": {
         "title": "🏀 Tip-Off Countdown",
         "subtitle": "Next tip-offs and matchups.",
         "footer": "Updated every minute • Keep your head in the game",
-        "color": discord.Color.from_rgb(242, 140, 40),  # Court orange
+        "color": discord.Color.from_rgb(242, 140, 40),
+        "emoji": "🔥",
     },
     "baseball": {
         "title": "⚾ Diamond Dateboard",
         "subtitle": "Upcoming first pitches and innings.",
         "footer": "Updated every minute • No rain delays for time",
-        "color": discord.Color.from_rgb(11, 31, 91),  # Deep navy
+        "color": discord.Color.from_rgb(11, 31, 91),
+        "emoji": "🧢",
     },
     "raidnight": {
         "title": "⚔️ Raid Night Queue",
         "subtitle": "Ready checks and pull timers ahead.",
         "footer": "Updated every minute • Wipes build character",
-        "color": discord.Color.from_rgb(155, 93, 229),  # Neon purple
+        "color": discord.Color.from_rgb(155, 93, 229),
+        "emoji": "🛡️",
     },
     "dnd": {
         "title": "🎲 Campaign Night Ledger",
         "subtitle": "When the party gathers again.",
         "footer": "Updated every minute • Roll initiative for punctuality",
-        "color": discord.Color.from_rgb(139, 94, 52),  # Parchment brown
+        "color": discord.Color.from_rgb(139, 94, 52),
+        "emoji": "🕯️",
     },
     "girly": {
         "title": "🎀 Pretty Plans Countdown",
         "subtitle": "Cute vibes, perfectly timed.",
         "footer": "Updated every minute • Sparkles optional",
-        "color": discord.Color.from_rgb(255, 93, 162),  # Bubblegum pink
+        "color": discord.Color.from_rgb(255, 93, 162),
+        "emoji": "💖",
     },
     "workplace": {
         "title": "📋 Operations Schedule",
         "subtitle": "Upcoming key dates and deliverables.",
         "footer": "Updated every minute • Meetings don’t wait",
-        "color": discord.Color.from_rgb(75, 85, 99),  # Slate gray
+        "color": discord.Color.from_rgb(75, 85, 99),
+        "emoji": "📌",
     },
     "celebration": {
         "title": "🎉 Celebration Countdown",
         "subtitle": "Big milestones and bright moments ahead.",
         "footer": "Updated every minute • Confetti pending",
-        "color": discord.Color.from_rgb(246, 201, 69),  # Gold
+        "color": discord.Color.from_rgb(246, 201, 69),
+        "emoji": "🎊",
     },
     "romance": {
         "title": "💞 Date Night Countdown",
         "subtitle": "Soft plans and sweet intentions.",
         "footer": "Updated every minute • Timing is everything",
-        "color": discord.Color.from_rgb(225, 29, 72),  # Rose red
+        "color": discord.Color.from_rgb(225, 29, 72),
+        "emoji": "🌹",
     },
     "vacation": {
         "title": "🌴 Vacation Countdown Board",
         "subtitle": "Getaway vibes incoming.",
         "footer": "Updated every minute • Bags packed mentally",
-        "color": discord.Color.from_rgb(20, 184, 166),  # Teal
+        "color": discord.Color.from_rgb(20, 184, 166),
+        "emoji": "🧳",
     },
     "hype": {
         "title": "🚀 Hype Tracker",
         "subtitle": "Big energy and countdown chaos.",
         "footer": "Updated every minute • Main character timing",
-        "color": discord.Color.from_rgb(255, 61, 127),  # Hot pink
+        "color": discord.Color.from_rgb(255, 61, 127),
+        "emoji": "⚡",
     },
     "minimal": {
         "title": "▫️ Countdown Board",
         "subtitle": "Neat, clean, and tidy timelines.",
         "footer": "Updated every minute • Simplicity wins",
-        "color": discord.Color.from_rgb(156, 163, 175),  # Neutral gray
+        "color": discord.Color.from_rgb(156, 163, 175),
+        "emoji": "▫️",
     },
     "school": {
         "title": "📚 Study & Deadlines Board",
         "subtitle": "Assignments, exams, and focus sessions.",
         "footer": "Updated every minute • Start early, stress less",
-        "color": discord.Color.from_rgb(37, 99, 235),  # Study blue
+        "color": discord.Color.from_rgb(37, 99, 235),
+        "emoji": "📝",
     },
     "spooky": {
         "title": "🎃 Spooky Season Countdowns",
         "subtitle": "The clock creaks… the event approaches.",
         "footer": "Updated every minute • The vibes are haunted",
-        "color": discord.Color.from_rgb(249, 115, 22),  # Pumpkin orange
+        "color": discord.Color.from_rgb(249, 115, 22),
+        "emoji": "🕯️",
     },
 }
+
+def get_theme_layout(guild_state: dict) -> dict:
+    theme_id = (guild_state.get("theme") or "classic").lower()
+    return THEME_LAYOUTS.get(theme_id, THEME_LAYOUTS["classic"])
+
 
 def get_theme_layout(guild_state: dict) -> dict:
     theme_id = (guild_state.get("theme") or "classic").lower()
@@ -2316,28 +2335,36 @@ def build_embed_for_guild(guild_state: dict) -> discord.Embed:
         color=layout.get("color", EMBED_COLOR)
     )
 
+    emoji = layout.get("emoji", "🕒")
     blocks = []
+
     for ev in events:
         try:
             dt = datetime.fromtimestamp(ev["timestamp"], tz=DEFAULT_TZ)
         except Exception:
             continue
+
         delta = dt - now
         if delta.total_seconds() < 0:
             continue  # skip past events
-        days = delta.days
-        hours = int((delta.seconds) / 3600)
-        minutes = int((delta.seconds % 3600) / 60)
 
+        days = delta.days
+        hours = delta.seconds // 3600
+        minutes = (delta.seconds % 3600) // 60
         name = ev.get("name", "Untitled Event")
 
         lines = [
-            f"🏟️ {name}",
+            f"{emoji} {name}",
             f"🕒 {days} days • {hours} hours • {minutes} minutes remaining",
             f"📅 {dt.strftime('%B %d, %Y • %I:%M %p %Z')}",
         ]
-        if ev.get("owner_id"):
-            lines.append(f"👤 Hosted by <@{ev['owner_id']}>")
+
+        owner_id = ev.get("owner_id")
+        owner_tag = ev.get("owner_tag")
+        if owner_id:
+            lines.append(f"👤 Hosted by <@{owner_id}>")
+        elif owner_tag:
+            lines.append(f"👤 Hosted by {owner_tag}")
 
         blocks.append("\n".join(lines))
 
@@ -2349,8 +2376,6 @@ def build_embed_for_guild(guild_state: dict) -> discord.Embed:
     embed.description = body
     embed.set_footer(text=layout["footer"])
     return embed
-
-
 
 async def rebuild_pinned_message(guild_id: int, channel: discord.TextChannel, guild_state: dict):
     sort_events(guild_state)
