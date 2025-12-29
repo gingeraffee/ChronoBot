@@ -19,7 +19,7 @@ from discord.errors import NotFound as DiscordNotFound, Forbidden as DiscordForb
 # CONFIG
 # ==========================
 
-VERSION = "2025-12-28"
+VERSION = "2025-12-29"
 
 DEFAULT_TZ = ZoneInfo("America/Chicago")
 UPDATE_INTERVAL_SECONDS = 60
@@ -293,6 +293,8 @@ def get_guild_state(guild_id: int) -> dict:
 
             # NEW (supporter features)
             "theme": DEFAULT_THEME_ID,
+            "countdown_title_override": None,
+            "countdown_description_override": None,
             "default_milestones": DEFAULT_MILESTONES.copy(),
             "templates": {},  # { "name_key": {...template...} }
             "digest": {
@@ -311,6 +313,8 @@ def get_guild_state(guild_id: int) -> dict:
         guilds[gid].setdefault("event_channel_set_by", None)
         guilds[gid].setdefault("event_channel_set_at", None)
         guilds[gid].setdefault("theme", DEFAULT_THEME_ID)
+        guilds[gid].setdefault("countdown_title_override", None)
+        guilds[gid].setdefault("countdown_description_override", None)
         guilds[gid].setdefault("default_milestones", DEFAULT_MILESTONES.copy())
         guilds[gid].setdefault("templates", {})
         guilds[gid].setdefault("digest", {"enabled": False, "channel_id": None, "last_sent_date": None})
@@ -2035,25 +2039,37 @@ def build_start_blast_message(guild_state: dict, *, event_name: str) -> str:
     template = random.choice(pool) if pool else "⏰ **{event}** is happening now!"
     return template.format(event=event_name)
 
-
 def build_embed_for_guild(guild_state: dict) -> discord.Embed:
     theme_id, profile = get_theme_profile(guild_state)
 
     seed = str(guild_state.get("event_channel_id") or "0")
     title = pick_title(theme_id, profile, seed=seed)
 
+    # ✅ OVERRIDES (apply here)
+    title_override = guild_state.get("countdown_title_override")
+    if isinstance(title_override, str) and title_override.strip():
+        title = title_override.strip()[:256]  # Discord embed title limit
+
     embed = discord.Embed(title=title, color=profile.get("color", EMBED_COLOR))
 
     events = guild_state.get("events", []) or []
+
+    # Pull description override once
+    desc_override = guild_state.get("countdown_description_override")
+    header = desc_override.strip() if isinstance(desc_override, str) and desc_override.strip() else ""
+
     if not events:
-        embed.description = "_No events yet. Use **/addevent** to add one._"
+        # If they set a custom description, show it even with no events
+        if header:
+            embed.description = header[:4096]
+        else:
+            embed.description = "_No events yet. Use **/addevent** to add one._"
         embed.set_footer(text=_append_vote_footer(f"Theme: {_THEME_LABELS.get(theme_id, theme_id.title())}"))
         return embed
 
     now = datetime.now(DEFAULT_TZ)
     grace = timedelta(seconds=EVENT_START_GRACE_SECONDS)
 
-    # sort by timestamp
     events_sorted = sorted(
         [ev for ev in events if isinstance(ev, dict)],
         key=lambda ev: ev.get("timestamp", 0) if isinstance(ev.get("timestamp"), int) else 0
@@ -2094,14 +2110,25 @@ def build_embed_for_guild(guild_state: dict) -> discord.Embed:
         base = f"{emoji} **{name}** — <t:{ts}:F> • <t:{ts}:R>{tag_str}"
         lines.append(f"🔴 {base}" if is_live else base)
 
-    embed.description = ("\n".join(lines)[:3990] + "…") if len("\n".join(lines)) > 4000 else "\n".join(lines)
+    body = "\n".join(lines)
+
+    # ✅ If they set a description override, treat it like a header above the list
+    if header:
+        full = f"{header}\n\n{body}"
+    else:
+        full = body
+
+    # Discord embed description limit = 4096 chars
+    if len(full) > 4096:
+        full = full[:4093] + "..."
+
+    embed.description = full
 
     if first_upcoming_banner:
         embed.set_image(url=first_upcoming_banner)
 
     embed.set_footer(text=_append_vote_footer(f"Theme: {_THEME_LABELS.get(theme_id, theme_id.title())}"))
     return embed
-
 
 async def rebuild_pinned_message(guild_id: int, channel: discord.TextChannel, guild_state: dict):
     sort_events(guild_state)
