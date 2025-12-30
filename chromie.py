@@ -2515,7 +2515,7 @@ def build_embed_for_guild(guild_state: dict) -> discord.Embed:
         if len(blocks) >= 10:
             break
 
-    body = f"{subtitle}\n\n" + ("\n\n".join(blocks) if blocks else "_No upcoming events yet._")
+    body = f"{header}\n\n" + ("\n\n".join(blocks) if blocks else "_No upcoming events yet._")
 
     # enforce Discord embed description limit
     if len(body) > 4096:
