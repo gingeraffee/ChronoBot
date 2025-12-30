@@ -931,10 +931,12 @@ def _append_vote_footer(existing: Optional[str]) -> str:
     
 def build_chronohelp_embed() -> discord.Embed:
     e = discord.Embed(
-        title="ChronoBot Help 🕒✨",
+        title="Chromie Help 🕒✨",
         description=(
             "Chromie pins a clean countdown list and posts reminders in your configured event channel.\n"
-            "**Tip:** Use `/listevents` (or autocomplete) to grab the right `index:` fast."
+            "**Tip:** Use `/listevents` (or autocomplete) to grab the right `index:` fast.\n"
+            "**Note:** Event + banner changes usually show up immediately. Theme changes may require "
+            "`/update_countdown` (or wait for the next auto-refresh) unless your build has the instant theme refresh fix."
         ),
         color=EMBED_COLOR,
     )
@@ -983,6 +985,17 @@ def build_chronohelp_embed() -> discord.Embed:
     )
 
     e.add_field(
+        name="Customization",
+        value=(
+            "• `/banner set` — add a banner image (shown on the pinned embed)\n"
+            "• `/banner clear` — remove the banner\n"
+            "• `/theme` — change the look of the pinned countdown (some themes may be supporter-only)\n"
+            "• `/update_countdown` — force-refresh the pinned countdown (useful after theme changes)"
+        ),
+        inline=False,
+    )
+
+    e.add_field(
         name="Owner DMs",
         value=(
             "• `/seteventowner index: user:` — assign an owner (they get milestone/repeat DMs)\n"
@@ -995,10 +1008,9 @@ def build_chronohelp_embed() -> discord.Embed:
         name="Supporter perks (vote unlocks 💜)",
         value=(
             "• `/vote` — check status + get the vote link\n"
-            "• `/theme` — change the look of the pinned countdown (match your server vibe)\n"
+            "• `/theme` — supporter-only themes (if enabled)\n"
             "• `/milestones advanced` — set server-wide default milestones (optionally apply to all events)\n"
-            "• `/template save` + `/template load` — reuse event settings (fast setup for repeating formats)\n"
-            "• `/banner set` — add a banner image to an event (polished pinned embed)\n"
+            "• `/template save` + `/template load` — reuse event settings\n"
             "• `/digest enable` / `/digest disable` — weekly Monday “next 7 days” summary"
         ),
         inline=False,
@@ -1011,17 +1023,16 @@ def build_chronohelp_embed() -> discord.Embed:
             "• `/archivepast` — manual cleanup (rare now)\n"
             "• `/resetchannel` — clear configured countdown channel\n"
             "• `/purgeevents confirm: YES` — delete all events for this server\n"
-            "• `/update_countdown` — force-refresh the pinned countdown\n"
             "• `/resendsetup` — resend the onboarding message"
         ),
         inline=False,
     )
+
     links = []
     if SUPPORT_SERVER_URL:
         links.append(f"• Support Discord — {SUPPORT_SERVER_URL}")
     if FAQ_URL:
         links.append(f"• Chromie FAQ — {FAQ_URL}")
-
     extra = ("\n" + "\n".join(links)) if links else ""
 
     e.add_field(
@@ -1034,7 +1045,8 @@ def build_chronohelp_embed() -> discord.Embed:
         inline=False,
     )
 
-    return e    
+    return e
+
 
 def chunk_text(text: str, limit: int = 1900) -> list[str]:
     """
