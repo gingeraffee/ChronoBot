@@ -4761,13 +4761,7 @@ async def theme_cmd(interaction: discord.Interaction, theme: str):
 
     # Refresh the pinned message (best-effort)
     try:
-        channel_id = g.get("event_channel_id")
-        if channel_id:
-            channel = await get_text_channel(channel_id)
-            if channel is not None:
-                pinned = await get_or_create_pinned_message(guild.id, channel, allow_create=True)
-                if pinned is not None:
-                    await update_countdown_message(guild, channel, pinned)
+        await refresh_countdown_message(guild, g)
     except Exception:
         pass
 
