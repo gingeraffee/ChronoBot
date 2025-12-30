@@ -2348,43 +2348,60 @@ def compute_dhm(target: datetime, now: datetime) -> tuple[int, int, int, bool]:
 # ==========================
 
 def build_embed_for_guild(guild_state: dict) -> discord.Embed:
-    layout = get_theme_layout(guild_state)
-    
-    # ✅ define events (and harden against bad state)
+    layout = get_theme_layout(guild_state) or {}
+
+    # Harden events
     events = guild_state.get("events", [])
     if not isinstance(events, list):
         events = []
+    events = list(events)  # shallow copy of list
 
-    # (optional) if you want to avoid mutating shared dicts while iterating
-    events = list(events)
     now = datetime.now(DEFAULT_TZ)
-    
+
+    # Sort by timestamp so "next upcoming" logic is true
+    def _ts(ev):
+        try:
+            return float(ev.get("timestamp", 0))
+        except Exception:
+            return 0.0
+    events.sort(key=_ts)
+
     override_title = (guild_state.get("countdown_title_override") or "").strip()
-    embed_title = override_title[:256] if override_title else layout.get("title", "Event Countdown")
+    embed_title = override_title[:256] if override_title else (layout.get("title") or "Event Countdown")[:256]
 
     embed = discord.Embed(
         title=embed_title,
-        description=layout.get("description", "📅 Upcoming events:"),
-        color=layout["color"],
+        color=layout.get("color", discord.Color.from_rgb(140, 82, 255)),  # safe default
     )
 
     emoji = layout.get("emoji", "🕒")
+    subtitle = layout.get("subtitle", layout.get("description", "📅 Upcoming events:"))
+    footer = layout.get("footer", "")
+
     blocks = []
+    banner_url = None
 
     for ev in events:
         try:
-            dt = datetime.fromtimestamp(ev["timestamp"], tz=DEFAULT_TZ)
+            dt = datetime.fromtimestamp(float(ev["timestamp"]), tz=DEFAULT_TZ)
         except Exception:
             continue
 
         delta = dt - now
         if delta.total_seconds() < 0:
-            continue  # skip past events
+            continue
+
+        # capture banner for the *next upcoming* event that has one
+        if banner_url is None:
+            u = ev.get("banner_url")
+            if isinstance(u, str) and u.strip():
+                banner_url = u.strip()
 
         days = delta.days
-        hours = delta.seconds // 3600
+        hours = (delta.seconds // 3600)
         minutes = (delta.seconds % 3600) // 60
-        name = ev.get("name", "Untitled Event")
+
+        name = str(ev.get("name", "Untitled Event"))[:256]  # avoid absurdly long names
 
         lines = [
             f"{emoji} {name}",
@@ -2395,22 +2412,37 @@ def build_embed_for_guild(guild_state: dict) -> discord.Embed:
         owner_id = ev.get("owner_user_id")
         owner_name = ev.get("owner_name")
 
+        # allow int-like strings too
+        if isinstance(owner_id, str) and owner_id.isdigit():
+            owner_id = int(owner_id)
+
         if isinstance(owner_id, int) and owner_id > 0:
             lines.append(f"👤 Hosted by <@{owner_id}>")
         elif isinstance(owner_name, str) and owner_name.strip():
             lines.append(f"👤 Hosted by {owner_name.strip()}")
 
-
         blocks.append("\n".join(lines))
 
-    if blocks:
-        body = f"{layout['subtitle']}\n\n" + "\n\n".join(blocks)
-    else:
-        body = f"{layout['subtitle']}\n\n_No upcoming events yet._"
+        # optional: cap how many you show to avoid giant embeds
+        if len(blocks) >= 10:
+            break
+
+    body = f"{subtitle}\n\n" + ("\n\n".join(blocks) if blocks else "_No upcoming events yet._")
+
+    # enforce Discord embed description limit
+    if len(body) > 4096:
+        body = body[:4093] + "..."
 
     embed.description = body
-    embed.set_footer(text=layout["footer"])
+
+    if footer:
+        embed.set_footer(text=footer[:2048])
+
+    if banner_url:
+        embed.set_image(url=banner_url)
+
     return embed
+
 
 async def rebuild_pinned_message(guild_id: int, channel: discord.TextChannel, guild_state: dict):
     sort_events(guild_state)
@@ -3569,7 +3601,7 @@ async def addevent(interaction: discord.Interaction, date: str, time: str, name:
 
         "owner_user_id": int(user.id),
         "owner_name": creator_display,
-
+        "banner_url": None,
         "start_announced": False,
         "banner_url": None,
     }
@@ -4161,7 +4193,22 @@ async def template_load_cmd(interaction: discord.Interaction, name: str, date: s
         f"✅ Created **{event_name}** from template **{tpl.get('display_name', name)}**.",
         ephemeral=True,
     )
+def _clean_url(u: str) -> str:
+    u = (u or "").strip()
+    # allow people to paste <https://...>
+    if u.startswith("<") and u.endswith(">"):
+        u = u[1:-1].strip()
+    return u
 
+def _looks_like_image_url(u: str) -> bool:
+    if not u:
+        return False
+    if not (u.startswith("http://") or u.startswith("https://")):
+        return False
+    # Discord/CDN links often don’t end with extensions, so be permissive:
+    img_exts = (".png", ".jpg", ".jpeg", ".gif", ".webp")
+    return ("cdn.discordapp.com" in u) or ("media.discordapp.net" in u) or u.lower().split("?")[0].endswith(img_exts)
+    
 banner_group = app_commands.Group(name="banner", description="Event banners (Supporter perk)")
 bot.tree.add_command(banner_group)
 
