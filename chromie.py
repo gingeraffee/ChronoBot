@@ -708,7 +708,6 @@ async def get_bot_member(guild: discord.Guild) -> Optional[discord.Member]:
     except Exception:
         return None
 
-
 async def send_onboarding_for_guild(guild: discord.Guild):
     guild_state = get_guild_state(guild.id)
 
@@ -721,52 +720,69 @@ async def send_onboarding_for_guild(guild: discord.Guild):
             contact_user = await bot.fetch_user(guild.owner_id)
         except Exception:
             contact_user = None
+
     mention = contact_user.mention if contact_user else ""
     milestone_str = ", ".join(str(x) for x in DEFAULT_MILESTONES)
 
-    setup_message = (
+    # -----------------------------
+    # Message 1: Base features
+    # -----------------------------
+    base_message = (
         f"Hey {mention}! Thanks for inviting **ChronoBot** to **{guild.name}** 🕒✨\n\n"
-        "I’m **Chromie** — your server’s confident little timekeeper. I pin a clean countdown list and post reminders so nobody has to do the mental math (or the panic).\n\n"
+        "I’m **Chromie** — your server’s confident little timekeeper. I pin a clean countdown list and post reminders "
+        "so nobody has to do the mental math (or the panic).\n\n"
         "**⚡ Quick start (30 seconds):**\n"
         "1) In your events channel: `/seteventchannel`\n"
         "2) Add an event: `/addevent date: 04/12/2026 time: 09:00 name: Game Night 🎲`\n\n"
-        "**🧭 Everyday commands:**\n"
-        "• `/listevents` (shows event numbers + autocomplete)\n"
+        "**🧭 Core commands:**\n"
+        "• `/listevents` (shows event numbers)\n"
         "• `/eventinfo index:` (details)\n"
         "• `/editevent` • `/dupeevent` • `/removeevent`\n"
         "• `/remindall` (manual reminder)\n"
-        "• `/silence` (pause reminders without deleting)\n"
-        "• `/setrepeat index: every_days:` + `/clearrepeat` (daily/weekly repeats)\n"
-        "• `/seteventowner` (owner gets milestone + repeat DMs)\n\n"
+        "• `/silence` (pause reminders without deleting)\n\n"
         "**🔔 Reminders & mentions:**\n"
-        f"Chromie posts milestone pings ({milestone_str} by default) in your event channel, timezone-aware (America/Chicago).\n"
-        "Want pings? Use `/setmentionrole` to mention a role on milestone posts (or clear it with `/clearmentionrole`).\n"
-        "Most command replies are private (ephemeral), but reminders are posted publicly in the event channel.\n\n"
-        "**🛠️ If something looks off:** run `/healthcheck` — it shows the configured channel + whether I can view/send/embed/read history/pin.\n"
-        "(Past events auto-remove after they pass, so the list stays tidy.)\n\n"
-        "**💜 Supporter perks (free vote unlocks):**\n"
-        "Run `/vote` to get the link + check your status. Voting on Top.gg unlocks:\n"
-        "• `/theme` (style the pinned countdown)\n"
-        "• `/milestones advanced` (server-wide defaults)\n"
-        "• `/template save` + `/template load` (reusable setups)\n"
-        "• `/banner set` (event banner images)\n"
-        "• `/digest enable` (weekly “next 7 days” recap)\n\n"
-        "Need the full spellbook? `/chronohelp`\n"
+        f"Milestone reminders post in your event channel ({milestone_str} by default). "
+        "Timezone is **America/Chicago**.\n"
+        "Want role pings? Use `/setmentionrole` (clear with `/clearmentionrole`).\n\n"
+        "**🛠️ Troubleshooting:**\n"
+        "Run `/healthcheck` — it shows your configured channel + whether I can view/send/embed/read history/pin.\n"
+        "(Past events auto-remove after they pass so the list stays tidy.)\n\n"
+        "**More help:** `/chronohelp`\n"
         f"FAQ: {FAQ_URL}\n"
         f"Support server: {SUPPORT_SERVER_URL}\n\n"
         "Alright — I’ll be over here, politely bullying time into behaving. 💜"
-)
+    )
 
+    # -----------------------------
+    # Message 2: Supporter features
+    # -----------------------------
+    supporter_message = (
+        "**💜 Supporter perks (free vote unlocks):**\n"
+        "ChronoBot is free. Voting on Top.gg helps it grow — and unlocks bonus features.\n\n"
+        "Run `/vote` to get the link + confirm your status. Voting unlocks:\n"
+        "• `/theme` — style the pinned countdown\n"
+        "• `/milestones advanced` — server-wide default milestone schedule\n"
+        "• `/template save` + `/template load` — reusable event setups\n"
+        "• `/banner set` — event banner images\n"
+        "• `/digest enable` — weekly “next 7 days” recap\n\n"
+        "If anything seems stuck after unlocking, run `/vote` again (Top.gg can take a moment to reflect your vote)."
+    )
 
-    sent = False
+    sent_dm = False
+
+    # Try DM first (preferred)
     if contact_user:
         try:
-            await contact_user.send(setup_message)
-            sent = True
+            await contact_user.send(base_message)
+            await contact_user.send(supporter_message)
+            sent_dm = True
         except discord.Forbidden:
-            sent = False
+            sent_dm = False
+        except Exception:
+            sent_dm = False
 
-    if not sent:
+    # Fallback: post in a channel (base message only to avoid “promo spam” vibe)
+    if not sent_dm:
         fallback_channel = guild.system_channel
 
         if fallback_channel is None:
@@ -780,13 +796,17 @@ async def send_onboarding_for_guild(guild: discord.Guild):
 
         if fallback_channel is not None:
             try:
-                await fallback_channel.send(setup_message, allowed_mentions=discord.AllowedMentions.none())
-                sent = True
-            except discord.Forbidden:
-                sent = False
+                await fallback_channel.send(
+                    base_message,
+                    allowed_mentions=discord.AllowedMentions.none()
+                )
+            except Exception:
+                pass
 
     guild_state["welcomed"] = True
     save_state()
+
+
 
 async def notify_owner_countdown_unpinned(
     guild: discord.Guild,
