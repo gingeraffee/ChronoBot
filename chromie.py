@@ -868,7 +868,7 @@ async def notify_owner_countdown_unpinned(
         f"I found the countdown message in **#{ch_name}**, but it is currently **not pinned**.\n"
         "That means it can scroll away and won’t stay at the top.\n\n"
         "**How to fix:**\n"
-        "1) In that channel, make sure the bot has **Manage Messages** (pin/unpin)\n"
+        "1) In that channel, make sure the bot has **Manage Messages** (pin/unpin/delete reminders)\n"
         "2) If the channel has too many pinned messages, unpin one (Discord has a pin limit)\n\n"
         "✅ Then run `/healthcheck` to confirm everything is fixed."
     )
