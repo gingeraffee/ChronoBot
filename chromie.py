@@ -55,6 +55,19 @@ def log_throttled(guild_id: int, code: str, msg: str):
         _last_log[key] = now
         print(msg)
 
+@bot.event
+async def on_ready():
+    try:
+        skus = await bot.fetch_skus()
+        print("=== SKUS ===")
+        for sku in skus:
+            # sku.type is an enum; printing it helps distinguish subscription vs one-time
+            print(f"name={sku.name!r}  id={sku.id}  type={sku.type}  price_tier={getattr(sku, 'price_tier', None)}")
+        print("=== END SKUS ===")
+    except Exception as e:
+        print("Failed to fetch SKUs:", repr(e))
+
+    print(f"Logged in as {bot.user} (id={bot.user.id})")
 # ==========================
 # TOP.GG VOTE GATING
 # ==========================
