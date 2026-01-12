@@ -21,7 +21,7 @@ from discord.errors import NotFound as DiscordNotFound, Forbidden as DiscordForb
 # CONFIG
 # ==========================
 
-VERSION = "2025-12-29-PRO"
+VERSION = "2025-12-29"
 
 DEFAULT_TZ = ZoneInfo("America/Chicago")
 UPDATE_INTERVAL_SECONDS = 60
@@ -46,110 +46,6 @@ _STATE_LOCK = Lock()
 TOPGG_TOKEN = os.getenv("TOPGG_TOKEN", "").strip()
 TOPGG_BOT_ID = os.getenv("TOPGG_BOT_ID", "").strip()
 TOPGG_FAIL_OPEN = False 
-
-# ==========================
-# ACCESS TIERS / GATING (Chromie Pro migration)
-# ==========================
-# Hybrid tiers:
-# - Free: cap = FREE_EVENT_CAP (default 3)
-# - Supporter (vote unlock): cap = SUPPORTER_EVENT_CAP (default 5) for 12 hours
-# - Pro (subscription): unlimited events + includes supporter perks
-#
-# Subscription integration note:
-# - Your billing system should set guild_state["pro_active"]=True and/or set pro_until epoch.
-# - We do not remove any saved settings when access expires; we simply re-check on use.
-
-FREE_EVENT_CAP = int(os.getenv("FREE_EVENT_CAP", "3") or 3)
-SUPPORTER_EVENT_CAP = int(os.getenv("SUPPORTER_EVENT_CAP", "5") or 5)
-
-SUPPORTER_UNLOCK_SECONDS = int(os.getenv("SUPPORTER_UNLOCK_SECONDS", str(60 * 60 * 12)) or (60 * 60 * 12))
-DEV_UNLOCK_SECONDS = int(os.getenv("DEV_UNLOCK_SECONDS", str(60 * 60 * 12)) or (60 * 60 * 12))
-
-def _now_epoch() -> int:
-    return int(time.time())
-
-def _fmt_until(epoch_seconds: int) -> str:
-    if not epoch_seconds:
-        return "-"
-    try:
-        return datetime.fromtimestamp(int(epoch_seconds), tz=DEFAULT_TZ).strftime("%Y-%m-%d %I:%M %p %Z")
-    except Exception:
-        return str(epoch_seconds)
-
-def is_pro(guild_state: dict) -> bool:
-    """Pro implies Supporter."""
-    if bool(guild_state.get("pro_active")):
-        return True
-    try:
-        return int(guild_state.get("pro_until") or 0) > _now_epoch()
-    except Exception:
-        return False
-
-def is_supporter(guild_state: dict) -> bool:
-    if is_pro(guild_state):
-        return True
-    try:
-        return int(guild_state.get("supporter_until") or 0) > _now_epoch()
-    except Exception:
-        return False
-
-def get_event_cap(guild_state: dict) -> Optional[int]:
-    """None => unlimited"""
-    if is_pro(guild_state):
-        return None
-    if is_supporter(guild_state):
-        return SUPPORTER_EVENT_CAP
-    return FREE_EVENT_CAP
-
-def get_access_label(guild_state: dict) -> Tuple[str, str]:
-    cap = get_event_cap(guild_state)
-    cap_label = "Unlimited" if cap is None else str(cap)
-    if is_pro(guild_state):
-        return ("Pro", cap_label)
-    if is_supporter(guild_state):
-        return ("Supporter", cap_label)
-    return ("Free", cap_label)
-
-def count_upcoming_events(guild_state: dict) -> int:
-    events = guild_state.get("events", [])
-    if not isinstance(events, list):
-        return 0
-    now = datetime.now(DEFAULT_TZ)
-    count = 0
-    for ev in events:
-        try:
-            dt = datetime.fromtimestamp(ev["timestamp"], tz=DEFAULT_TZ)
-        except Exception:
-            continue
-        if dt >= now:
-            count += 1
-    return count
-
-async def refresh_pinned_embed(guild_state: dict) -> None:
-    """Best-effort refresh so the pinned embed reflects the current Access tier."""
-    try:
-        channel_id = guild_state.get("event_channel_id")
-        if not channel_id:
-            return
-
-        channel = await get_text_channel(channel_id)
-        if channel is None:
-            return
-
-        pinned_id = guild_state.get("pinned_message_id")
-        if pinned_id:
-            try:
-                msg = await channel.fetch_message(int(pinned_id))
-                await msg.edit(embed=build_embed_for_guild(guild_state))
-                return
-            except NotFound:
-                pass
-            except HTTPException:
-                pass
-
-        await rebuild_pinned_message(channel.guild.id, channel, guild_state)
-    except Exception:
-        return
     
 def log_throttled(guild_id: int, code: str, msg: str):
     key = (guild_id, code)
@@ -391,9 +287,6 @@ def save_state():
 state = load_state()
 for _, g_state in state.get("guilds", {}).items():
     sort_events(g_state)
-    g_state.setdefault("supporter_until", 0)
-    g_state.setdefault("pro_until", 0)
-    g_state.setdefault("pro_active", False)
 save_state()
 
 
@@ -407,11 +300,6 @@ def get_guild_state(guild_id: int) -> dict:
             "mention_role_id": None,
             "events": [],
             "welcomed": False,
-
-            # NEW (access tiers)
-            "supporter_until": 0,
-            "pro_until": 0,
-            "pro_active": False,
 
             # NEW (audit)
             "event_channel_set_by": None,
@@ -436,9 +324,6 @@ def get_guild_state(guild_id: int) -> dict:
         guilds[gid].setdefault("mention_role_id", None)
         guilds[gid].setdefault("events", [])
         guilds[gid].setdefault("welcomed", False)
-        guilds[gid].setdefault("supporter_until", 0)
-        guilds[gid].setdefault("pro_until", 0)
-        guilds[gid].setdefault("pro_active", False)
         guilds[gid].setdefault("event_channel_set_by", None)
         guilds[gid].setdefault("event_channel_set_at", None)
         guilds[gid].setdefault("theme", DEFAULT_THEME_ID)
@@ -3517,42 +3402,17 @@ async def vote_cmd(interaction: discord.Interaction):
 @app_commands.checks.has_permissions(manage_guild=True)
 @app_commands.guild_only()
 async def vote_debug_cmd(interaction: discord.Interaction):
+    # bypass cache so you see reality right now
     _vote_cache.pop(interaction.user.id, None)
     voted = await topgg_has_voted(interaction.user.id, force=True)
 
-    guild = interaction.guild
-    assert guild is not None
-    guild_state = get_guild_state(guild.id)
-
-    configured = "✅" if (TOPGG_TOKEN and TOPGG_BOT_ID) else "❌"
-    token_present = "✅" if (TOPGG_TOKEN and len(TOPGG_TOKEN) > 0) else "❌"
-    token_len = len(TOPGG_TOKEN or "")
-    bot_id_display = TOPGG_BOT_ID or "MISSING"
-
-    tier_label, cap_label = get_access_label(guild_state)
-    supporter_until = int(guild_state.get("supporter_until") or 0)
-    pro_until = int(guild_state.get("pro_until") or 0)
-    pro_active_flag = bool(guild_state.get("pro_active"))
-
-    if is_pro(guild_state):
-        tier_status = "✅ Pro"
-    elif is_supporter(guild_state):
-        tier_status = "✅ Supporter"
-    else:
-        tier_status = "🔒 Free"
-
+    cfg = "✅" if (TOPGG_TOKEN and TOPGG_BOT_ID) else "❌"
     await interaction.response.send_message(
-        "🔍 **Top.gg Vote Debug**\n"
-        f"Configured (token + bot id): {configured}\n"
-        f"Token present: {token_present} (len={token_len})\n"
-        f"Bot ID set to: `{bot_id_display}`\n"
+        "🔎 **Top.gg Vote Debug**\n"
+        f"Configured (token + bot id): {cfg}\n"
+        f"Bot ID set to: `{TOPGG_BOT_ID or 'MISSING'}`\n"
         f"Vote active (last 12h): {'✅' if voted else '❌'}\n\n"
-        f"Status: {tier_status}\n"
-        f"Access: **{tier_label}** - Cap: **{cap_label}**\n"
-        f"Supporter until: {_fmt_until(supporter_until)}\n"
-        f"Pro until: {_fmt_until(pro_until)}\n"
-        f"Pro active flag: {'✅' if pro_active_flag else '❌'}\n\n"
-        "If this shows ❌ but you *just* voted, it's usually one of:\n"
+        "If this shows ❌ but you *just* voted, it’s usually one of:\n"
         "• vote is older than 12 hours\n"
         "• you voted a different bot (dev vs prod ID mismatch)\n"
         "• token is wrong/expired (look for HTTP 401/403 in logs)\n",
@@ -3914,25 +3774,6 @@ async def addevent(interaction: discord.Interaction, date: str, time: str, name:
             msg += "\n(Do this in the linked server.)"
         await interaction.edit_original_response(content=msg)
         return
-
-    
-    # ---------------------------
-    # Enforce tier-based event caps
-    # ---------------------------
-    cap = get_event_cap(guild_state)
-    if cap is not None:
-        current = count_upcoming_events(guild_state)
-        if current >= cap:
-            tier_label, cap_label = get_access_label(guild_state)
-            msg = (
-                f"🚫 This server is at its **{tier_label}** event cap (**{cap_label}**).\n"
-                f"Current upcoming events: **{current}**.\n\n"
-                "Unlock more:\n"
-                f"• `/supporter_unlock` (vote) → cap **{SUPPORTER_EVENT_CAP}** for 12 hours\n"
-                "• Chromie Pro subscription → **Unlimited** events + all supporter perks"
-            )
-            await interaction.edit_original_response(content=msg)
-            return
 
     try:
         dt = datetime.strptime(f"{date} {time}", "%m/%d/%Y %H:%M")
@@ -5152,100 +4993,6 @@ async def chronohelp(interaction: discord.Interaction):
 # ==========================
 # RUN
 # ==========================
-
-
-
-# ==========================
-# NEW PRO/SUPPORTER COMMANDS
-# ==========================
-
-@bot.tree.command(name="supporter_unlock", description="Unlock Supporter perks for this server for 12 hours (vote).")
-@app_commands.checks.has_permissions(manage_guild=True)
-@app_commands.guild_only()
-async def supporter_unlock_cmd(interaction: discord.Interaction):
-    guild = interaction.guild
-    assert guild is not None
-
-    guild_state = get_guild_state(guild.id)
-
-    if is_pro(guild_state):
-        await interaction.response.send_message(
-            "✅ This server already has **Chromie Pro** access (includes Supporter perks).",
-            ephemeral=True,
-        )
-        return
-
-    _vote_cache.pop(interaction.user.id, None)
-    voted = await topgg_has_voted(interaction.user.id, force=True)
-
-    if not voted:
-        await interaction.response.send_message(
-            "🗳️ Vote required to unlock **Supporter** perks for this server.\n"
-            "Vote on Top.gg, then run `/supporter_unlock` again.",
-            ephemeral=True,
-            view=build_vote_view(),
-        )
-        return
-
-    until = _now_epoch() + SUPPORTER_UNLOCK_SECONDS
-    guild_state["supporter_until"] = int(until)
-    save_state()
-
-    await refresh_pinned_embed(guild_state)
-
-    await interaction.response.send_message(
-        f"✅ **Supporter unlocked** for this server until **{_fmt_until(int(until))}**.\n"
-        f"Event cap is now **{SUPPORTER_EVENT_CAP}** for 12 hours.",
-        ephemeral=True,
-    )
-
-
-def _owner_only():
-    async def predicate(interaction: discord.Interaction) -> bool:
-        try:
-            return await bot.is_owner(interaction.user)
-        except Exception:
-            return False
-    return app_commands.check(predicate)
-
-
-@bot.tree.command(name="dev_unlock_12h", description="Owner-only: unlock Supporter/Pro for 12 hours (testing).")
-@_owner_only()
-@app_commands.guild_only()
-@app_commands.describe(tier="Which tier to unlock for 12 hours")
-@app_commands.choices(
-    tier=[
-        app_commands.Choice(name="supporter", value="supporter"),
-        app_commands.Choice(name="pro", value="pro"),
-        app_commands.Choice(name="both", value="both"),
-    ]
-)
-async def dev_unlock_12h_cmd(interaction: discord.Interaction, tier: app_commands.Choice[str]):
-    guild = interaction.guild
-    assert guild is not None
-
-    guild_state = get_guild_state(guild.id)
-
-    until = _now_epoch() + DEV_UNLOCK_SECONDS
-    chosen = (tier.value or "").lower()
-
-    if chosen in ("supporter", "both"):
-        guild_state["supporter_until"] = int(until)
-    if chosen in ("pro", "both"):
-        guild_state["pro_until"] = int(until)
-        guild_state["pro_active"] = True
-
-    save_state()
-    await refresh_pinned_embed(guild_state)
-
-    tier_label, cap_label = get_access_label(guild_state)
-    await interaction.response.send_message(
-        f"🧪 Dev unlock applied: **{chosen}** until **{_fmt_until(int(until))}**.\n"
-        f"Access now: **{tier_label}** - Event cap: **{cap_label}**",
-        ephemeral=True,
-    )
-
-
 
 def main():
     if not TOKEN:
