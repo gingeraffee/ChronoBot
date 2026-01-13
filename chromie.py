@@ -232,6 +232,50 @@ def get_pro_status_text(guild_state: Dict[str, Any]) -> str:
         return "✅ Pro Active"
     return "🔒 Pro Locked"
 
+
+def require_pro(feature_name: str):
+    """Decorator to require Pro subscription for a command."""
+    async def predicate(interaction: discord.Interaction) -> bool:
+        if not interaction.guild_id:
+            return True  # Allow in DMs if they have linked server
+        
+        guild_state = get_guild_state(interaction.guild_id)
+        if is_pro(guild_state):
+            return True
+        
+        # Send Pro required message
+        embed = discord.Embed(
+            title="❌ Chromie Pro Required",
+            description=f"**{feature_name}** is exclusive to Chromie Pro subscribers.",
+            color=discord.Color.orange()
+        )
+        embed.add_field(
+            name="💎 Chromie Pro ($2.99/month)",
+            value=(
+                "• ♾️ Unlimited events\n"
+                "• 🔁 Recurring event reminders\n"
+                "• 📋 Event templates (save/load)\n"
+                "• 📑 Duplicate events\n"
+                "• 📊 Weekly digest\n"
+                "• 🎨 All Supporter features (permanent)\n\n"
+                "Subscribe via **Discord Server Subscription**.\n"
+                "Pro unlocks for the **entire server**!"
+            ),
+            inline=False
+        )
+        
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(embed=embed, ephemeral=True)
+            else:
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+        except:
+            pass
+        
+        return False
+    
+    return app_commands.check(predicate)
+
     
     
 # ==========================
@@ -857,15 +901,20 @@ async def send_onboarding_for_guild(guild: discord.Guild):
     # -----------------------------
     base_message = (
         f"Hey {mention}! Thanks for inviting **ChronoBot** to **{guild.name}** 🕒✨\n\n"
-        "I’m **Chromie** — your server’s confident little timekeeper. I pin a clean countdown list and post reminders "
+        "I'm **Chromie** — your server's confident little timekeeper. I pin a clean countdown list and post reminders "
         "so nobody has to do the mental math (or the panic).\n\n"
         "**⚡ Quick start (30 seconds):**\n"
         "1) In your events channel: `/seteventchannel`\n"
         "2) Add an event: `/addevent date: 04/12/2026 time: 09:00 name: Game Night 🎲`\n\n"
+        "**🎯 Your tier: Free (3 events max)**\n"
+        "• 🆓 **Free:** 3 events, all core features\n"
+        "• ⭐ **Supporter:** 5 events, themes, banners (vote on Top.gg - free!)\n"
+        "• 💎 **Pro:** Unlimited events, recurring reminders, templates, digest ($2.99/mo)\n"
+        "Run `/vote` to unlock Supporter, or subscribe for Pro via Discord!\n\n"
         "**🧭 Core commands:**\n"
         "• `/listevents` (shows event numbers)\n"
         "• `/eventinfo index:` (details)\n"
-        "• `/editevent` • `/dupeevent` • `/removeevent`\n"
+        "• `/editevent` • `/removeevent`\n"
         "• `/remindall` (manual reminder)\n"
         "• `/silence` (pause reminders without deleting)\n\n"
         "**🔔 Reminders & mentions:**\n"
@@ -875,55 +924,36 @@ async def send_onboarding_for_guild(guild: discord.Guild):
         "**🛠️ Troubleshooting:**\n"
         "Run `/healthcheck` — it shows your configured channel + whether I can view/send/embed/read history/pin.\n"
         "(Past events auto-remove after they pass so the list stays tidy.)\n\n"
-        "**More help:** `/chronohelp`\n"
+        "**More help:** `/chronohelp` (check out Tiers & Pricing!)\n"
         f"FAQ: {FAQ_URL}\n"
         f"Support server: {SUPPORT_SERVER_URL}\n\n"
-        "Alright — I’ll be over here, politely bullying time into behaving. 💜"
+        "Alright — I'll be over here, politely bullying time into behaving. 💜"
     )
 
-    # -----------------------------
-    # Message 2: Supporter features
-    # -----------------------------
     supporter_message = (
-        "**💜 Supporter perks (free vote unlocks):**\n"
-        "ChronoBot is free. Voting on Top.gg helps it grow — and unlocks bonus features.\n\n"
-        "Run `/vote` to get the link + confirm your status. Voting unlocks:\n"
-        "• `/theme` — style the pinned countdown\n"
-        "• `/milestones advanced` — server-wide default milestone schedule\n"
-        "• `/template save` + `/template load` — reusable event setups\n"
-        "• `/banner set` — event banner images\n"
-        "• `/digest enable` — weekly “next 7 days” recap\n\n"
-        "If anything seems stuck after unlocking, run `/vote` again (Top.gg can take a moment to reflect your vote)."
+        "**⭐ Supporter Tier (Vote to unlock - Free!)**\n"
+        "Chromie is free. Voting on Top.gg helps it grow — and unlocks bonus features for 12 hours.\n\n"
+        "**What you get:**\n"
+        "• 5 events (vs 3 for Free)\n"
+        "• `/theme` — 14 premium themes (sports, seasonal, minimal, etc.)\n"
+        "• `/banner set` — custom event banner images\n"
+        "• `/milestones advanced` — server-wide milestone schedules\n\n"
+        "**How to unlock:**\n"
+        "Run `/vote` to get the link. Vote takes 10 seconds. Supporter unlocks for 12 hours!\n\n"
+        "**💎 Chromie Pro ($2.99/month)**\n"
+        "For power users who need unlimited events + advanced automation:\n"
+        "• ♾️ Unlimited events (no cap)\n"
+        "• 🔁 Recurring event reminders (`/setrepeat`)\n"
+        "• 📋 Event templates (`/template save`, `/template load`)\n"
+        "• 📑 Duplicate events (`/dupeevent`)\n"
+        "• 📊 Weekly digest summaries (`/digest enable`)\n"
+        "• 🎨 All Supporter features (permanent)\n"
+        "• 📌 Multiple countdown boards\n"
+        "• 🏆 Priority support\n\n"
+        "Subscribe via Discord Server Subscription. Pro unlocks for the entire server!\n\n"
+        "If anything seems stuck after voting, run `/vote` again (Top.gg can take a moment to reflect your vote)."
     )
 
-    sent_dm = False
-
-    # Try DM first (preferred)
-    if contact_user:
-        try:
-            await contact_user.send(base_message)
-            await contact_user.send(supporter_message)
-            sent_dm = True
-        except discord.Forbidden:
-            sent_dm = False
-        except Exception:
-            sent_dm = False
-
-    # Fallback: post in a channel (base message only to avoid “promo spam” vibe)
-    if not sent_dm:
-        fallback_channel = guild.system_channel
-
-        if fallback_channel is None:
-            bot_m = await get_bot_member(guild)
-            for ch in guild.text_channels:
-                target = bot_m if bot_m is not None else guild.default_role
-                perms = ch.permissions_for(target)
-                if perms.view_channel and perms.send_messages:
-                    fallback_channel = ch
-                    break
-
-        if fallback_channel is not None:
-            try:
                 await fallback_channel.send(
                     base_message,
                     allowed_mentions=discord.AllowedMentions.none()
@@ -1087,14 +1117,18 @@ HELP_PAGES = {
         "desc": (
             "**Quick start:**\n"
             "1) In your events channel: `/seteventchannel`\n"
-            "2) Add one: `/addevent`\n"
+            "2) Add an event: `/addevent`\n"
             "3) Chromie keeps the pinned countdown updated.\n\n"
+            "**🎯 Event Limits by Tier:**\n"
+            "🆓 Free: 3 events • ⭐ Supporter: 5 events • 💎 Pro: Unlimited\n"
+            "Run `/vote` to unlock Supporter (free!), or subscribe to Pro ($2.99/mo) for unlimited events + advanced features.\n\n"
             "Use the dropdown to browse commands by category."
         ),
         "lines": [
             "`/seteventchannel` — set the pinned countdown channel",
             "`/addevent` — add an event",
             "`/listevents` — list events + index numbers",
+            "`/vote` — check your tier + unlock Supporter",
             "`/update_countdown` — force refresh (troubleshooting)",
         ],
     },
@@ -1107,7 +1141,7 @@ HELP_PAGES = {
             "`/nextevent` — show next upcoming event",
             "`/eventinfo index:` — details for one event",
             "`/editevent index:` — edit name/date/time",
-            "`/dupeevent index:` — duplicate an event",
+            "`/dupeevent index:` — 💎 duplicate an event (Pro)",
             "`/removeevent index:` — delete an event",
         ],
     },
@@ -1119,8 +1153,8 @@ HELP_PAGES = {
             "`/setmilestones index: milestones:` — custom milestone days",
             "`/resetmilestones index:` — restore default milestones",
             "`/silence index:` — stop reminders for an event",
-            "`/setrepeat index: every_days:` — repeat reminders",
-            "`/clearrepeat index:` — turn repeat off",
+            "`/setrepeat index: every_days:` — 💎 repeat reminders (Pro)",
+            "`/clearrepeat index:` — 💎 turn repeat off (Pro)",
         ],
     },
     "customize": {
@@ -1130,8 +1164,9 @@ HELP_PAGES = {
             "`/theme` — change the countdown theme",
             "`/banner set` — set a banner image",
             "`/banner clear` — remove the banner",
-            "`/countdown title` — set pinned title (supporter-only if enabled)",
-            "`/countdown description` — set pinned description (supporter-only if enabled)",
+            "`/template save` — 💎 save event as template (Pro)",
+            "`/template load` — 💎 load event from template (Pro)",
+            "`/digest enable` — 💎 weekly event digest (Pro)",
         ],
     },
     "owner": {
@@ -1142,12 +1177,83 @@ HELP_PAGES = {
             "`/cleareventowner index:` — remove owner",
         ],
     },
-    "supporter": {
-        "title": "Supporter (Top.gg Vote)",
-        "desc": "Vote perks + diagnostics.",
+    "tiers": {
+        "title": "Tiers & Pricing 💎",
+        "desc": "Chromie has three tiers to fit your needs.",
         "lines": [
-            "`/vote` — check supporter status + link",
-            "`/vote_debug` — admin vote verification debug",
+            "**🆓 Free Tier (Always free!)**",
+            "• Up to 3 events",
+            "• All core countdown features",
+            "• Milestone reminders",
+            "• Event management (add/edit/delete)",
+            "• 14 premium themes",
+            "",
+            "**⭐ Supporter Tier (Vote to unlock - Free!)**",
+            "• Up to 5 events",
+            "• Everything in Free",
+            "• Custom event banners (`/banner set`)",
+            "• Advanced milestone customization",
+            "• Unlock by voting on Top.gg (lasts 12 hours)",
+            "• Run `/vote` to get the link!",
+            "",
+            "**💎 Chromie Pro ($2.99/month)**",
+            "• Unlimited events",
+            "• Everything in Supporter (permanent)",
+            "• Recurring event reminders (`/setrepeat`)",
+            "• Event templates (`/template save` + `/template load`)",
+            "• Duplicate events (`/dupeevent`)",
+            "• Weekly digest summaries (`/digest enable`)",
+            "• Multiple countdown boards",
+            "• Priority support",
+            "• Subscribe via Discord Server Subscription",
+        ],
+    },
+    "supporter": {
+        "title": "Supporter Tier ⭐",
+        "desc": "Vote on Top.gg to unlock Supporter features for 12 hours (completely free!).",
+        "lines": [
+            "**What you get:**",
+            "• 5 events (vs 3 for Free)",
+            "• Custom themes (`/theme`)",
+            "• Event banners (`/banner set`)",
+            "• Advanced milestone customization",
+            "",
+            "**How to unlock:**",
+            "1) Run `/vote` to get the Top.gg link",
+            "2) Click the link and vote (takes 10 seconds)",
+            "3) Supporter unlocks for 12 hours",
+            "4) Vote again after 12h to keep access!",
+            "",
+            "**Commands:**",
+            "`/vote` — check status + get vote link",
+            "`/vote_debug` — admin troubleshooting",
+            "",
+            "**Want more? Upgrade to Chromie Pro:**",
+            "$2.99/month • Unlimited events • Recurring reminders",
+            "Templates • Digest • Event duplication",
+            "Subscribe via Discord Server Subscription",
+        ],
+    },
+    "pro": {
+        "title": "Chromie Pro 💎",
+        "desc": "Premium features for power users. $2.99/month via Discord subscription.",
+        "lines": [
+            "**What's included:**",
+            "• ♾️ Unlimited events (no cap!)",
+            "• 🔁 Recurring event reminders (`/setrepeat`, `/clearrepeat`)",
+            "• 📋 Event templates (`/template save`, `/template load`)",
+            "• 📑 Duplicate events (`/dupeevent`)",
+            "• 📊 Weekly digest (`/digest enable`)",
+            "• 🎨 All Supporter features (permanent, no voting needed)",
+            "• 📌 Multiple countdown boards per server",
+            "• 🏆 Priority support",
+            "",
+            "**How to subscribe:**",
+            "Subscribe via your server's Discord Server Subscription.",
+            "Pro unlocks for the ENTIRE server — all admins get Pro features.",
+            "",
+            "**Price:** $2.99/month per server",
+            "Cancel anytime via Discord subscription settings.",
         ],
     },
     "maintenance": {
@@ -1177,7 +1283,9 @@ HELP_OPTIONS = [
     ("Reminders", "reminders", "Milestones & repeats"),
     ("Customization", "customize", "Themes & banners"),
     ("Owner DMs", "owner", "Assign event owner"),
+    ("Tiers & Pricing", "tiers", "Free, Supporter, Pro"),
     ("Supporter", "supporter", "Vote perks"),
+    ("Chromie Pro", "pro", "$2.99/mo features"),
     ("Maintenance", "maintenance", "Healthcheck & resets"),
     ("DM Control", "dm", "Link + DM add"),
 ]
@@ -3664,7 +3772,8 @@ async def linkserver(interaction: discord.Interaction):
 digest_group = app_commands.Group(name="digest", description="Weekly event digest")
 bot.tree.add_command(digest_group)
 
-@digest_group.command(name="enable", description="Enable the weekly digest (Supporter perk).")
+@digest_group.command(name="enable", description="[Pro] Enable the weekly digest.")
+@require_pro("Weekly Digest")
 @require_vote("/digest enable")
 @app_commands.checks.has_permissions(manage_guild=True)
 @app_commands.guild_only()
@@ -3866,6 +3975,59 @@ async def addevent(interaction: discord.Interaction, date: str, time: str, name:
         await interaction.edit_original_response(content=msg)
         return
 
+    # EVENT LIMIT ENFORCEMENT (from spec)
+    current_event_count = len(guild_state.get("events", []))
+    
+    # Determine user tier and limits
+    is_pro_guild = is_pro(guild_state)
+    has_voted = await topgg_has_voted(interaction.user.id, force=True)
+    
+    if has_voted:
+        # Update guild supporter status if they voted
+        now = datetime.utcnow()
+        vote_until = now + timedelta(hours=12)
+        if "supporter" not in guild_state:
+            guild_state["supporter"] = {}
+        guild_state["supporter"]["last_vote_at"] = now.isoformat()
+        guild_state["supporter"]["vote_until"] = vote_until.isoformat()
+        save_state()
+    
+    # Determine limits: Free=3, Supporter=5, Pro=unlimited
+    if is_pro_guild:
+        event_limit = None  # Unlimited for Pro
+        tier_name = "Chromie Pro"
+    elif has_voted:
+        event_limit = 5
+        tier_name = "Supporter"
+    else:
+        event_limit = 3
+        tier_name = "Free"
+    
+    # Check if limit exceeded
+    if event_limit is not None and current_event_count >= event_limit:
+        if tier_name == "Free":
+            msg = (
+                f"❌ **Event limit reached!**\n\n"
+                f"You have **{current_event_count}/{event_limit} events** (Free tier limit).\n\n"
+                f"**Upgrade options:**\n"
+                f"• 🗳️ **Vote on Top.gg** → Get 5 events (resets every 12 hours)\n"
+                f"  Use `/vote` to get the link!\n"
+                f"• 💎 **Chromie Pro** → Unlimited events + premium features\n\n"
+                f"Or delete an event with `/removeevent` first."
+            )
+        else:  # Supporter at 5/5
+            msg = (
+                f"❌ **Event limit reached!**\n\n"
+                f"You have **{current_event_count}/{event_limit} events** (Supporter tier limit).\n\n"
+                f"**Upgrade to Chromie Pro for:**\n"
+                f"• ♾️ Unlimited events\n"
+                f"• 💎 Premium features\n"
+                f"• 🎨 Advanced customization\n\n"
+                f"Or delete an event with `/removeevent` first."
+            )
+        await interaction.edit_original_response(content=msg)
+        return
+
     try:
         dt = datetime.strptime(f"{date} {time}", "%m/%d/%Y %H:%M")
     except ValueError:
@@ -3920,9 +4082,11 @@ async def addevent(interaction: discord.Interaction, date: str, time: str, name:
             await refresh_countdown_message(guild, guild_state)
 
     await interaction.edit_original_response(
-        content=f"✅ Added event **{name}** on {dt.strftime('%B %d, %Y at %I:%M %p %Z')} in server **{guild.name}**."
+        content=f"✅ Added event **{name}** on {dt.strftime('%B %d, %Y at %I:%M %p %Z')} in server **{guild.name}**.\n• {tier_name}: {len(guild_state['events'])}/{event_limit if event_limit else '∞'} events"
     )
-    await maybe_vote_nudge(interaction, "Event scheduled! If Chromie’s been useful, a Top.gg vote helps a ton.")
+    # Only nudge free users who are approaching limit
+    if tier_name == "Free" and len(guild_state["events"]) >= 2:
+        await maybe_vote_nudge(interaction, "Event scheduled! Vote on Top.gg to unlock 5 events.")
 
 
 
@@ -4121,7 +4285,8 @@ async def editevent(interaction: discord.Interaction, index: int, name: Optional
     )
 
 
-@bot.tree.command(name="dupeevent", description="Duplicate an event (optional time/name).")
+@bot.tree.command(name="dupeevent", description="[Pro] Duplicate an event (optional time/name).")
+@require_pro("Event Duplication")
 @app_commands.describe(
     index="The number shown in /listevents (1, 2, 3, ...)",
     date="New date MM/DD/YYYY",
@@ -4396,7 +4561,8 @@ async def milestones_advanced_cmd(interaction: discord.Interaction, milestones: 
 template_group = app_commands.Group(name="template", description="Event templates (Supporter perk)")
 bot.tree.add_command(template_group)
 
-@template_group.command(name="save", description="Save an event as a template (Supporter perk).")
+@template_group.command(name="save", description="[Pro] Save an event as a template.")
+@require_pro("Event Templates")
 @app_commands.describe(index="Event number from /listevents", name="Template name")
 @app_commands.autocomplete(index=event_index_autocomplete)
 @require_vote("/template save")
@@ -4429,7 +4595,8 @@ async def template_save_cmd(interaction: discord.Interaction, index: int, name: 
     await interaction.response.send_message(f"✅ Saved template **{name.strip()}**.", ephemeral=True)
 
 
-@template_group.command(name="load", description="Create a new event from a template (Supporter perk).")
+@template_group.command(name="load", description="[Pro] Create a new event from a template.")
+@require_pro("Event Templates")
 @app_commands.describe(
     name="Template name",
     date="MM/DD/YYYY",
@@ -4743,7 +4910,8 @@ async def clearmentionrole(interaction: discord.Interaction):
     )
 
 
-@bot.tree.command(name="setrepeat", description="Set a repeating reminder for an event (every X days).")
+@bot.tree.command(name="setrepeat", description="[Pro] Set a repeating reminder for an event (every X days).")
+@require_pro("Recurring Event Reminders")
 @app_commands.describe(
     index="The number shown in /listevents (1, 2, 3, ...)",
     every_days="Repeat interval in days (1 = daily, 7 = weekly, etc.)",
@@ -4786,7 +4954,8 @@ async def setrepeat(interaction: discord.Interaction, index: int, every_days: in
     )
 
 
-@bot.tree.command(name="clearrepeat", description="Turn off repeating reminders for an event.")
+@bot.tree.command(name="clearrepeat", description="[Pro] Turn off repeating reminders for an event.")
+@require_pro("Recurring Event Reminders")
 @app_commands.describe(index="The number shown in /listevents (1, 2, 3, ...)")
 @app_commands.autocomplete(index=event_index_autocomplete)
 @app_commands.checks.has_permissions(manage_guild=True)
