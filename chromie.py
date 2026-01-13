@@ -4038,7 +4038,14 @@ async def addevent(interaction: discord.Interaction, date: str, time: str, name:
         return
 
     # EVENT LIMIT ENFORCEMENT (from spec)
-    current_event_count = len(guild_state.get("events", []))
+    # Only count FUTURE events, not past ones
+    now = datetime.now(DEFAULT_TZ)
+    all_events = guild_state.get("events", [])
+    future_events = [
+        ev for ev in all_events 
+        if datetime.fromtimestamp(ev.get("timestamp", 0), tz=DEFAULT_TZ) > now
+    ]
+    current_event_count = len(future_events)
     
     # Determine user tier and limits
     is_pro_guild = is_pro(guild_state)
