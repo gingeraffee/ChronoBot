@@ -202,9 +202,14 @@ def is_pro(guild_state: Dict[str, Any]) -> bool:
     Returns True if:
     - pro_active is True AND pro_until is in future, OR
     - grace_until is in future (migration grace period), OR
-    - migration_mode is True (soft rollout)
+    - migration_mode is True (soft rollout), OR
+    - discord_subscription is True (Discord subscription synced)
     """
     pro_data = guild_state.get("pro", {})
+    
+    # Check if marked as Discord subscription (means it's synced and active)
+    if pro_data.get("discord_subscription", False):
+        return True
     
     if pro_data.get("pro_active", False):
         pro_until_str = pro_data.get("pro_until")
@@ -744,6 +749,72 @@ async def cleanup_milestones_if_due(guild_state: dict, ev: dict):
 # ==========================
 
 intents = discord.Intents.default()
+
+
+# ==========================
+# DISCORD SUBSCRIPTION CHECKING
+# ==========================
+
+async def check_discord_entitlements(guild_id: int) -> bool:
+    """
+    Check if a guild has an active Discord subscription for Chromie Pro.
+    Uses Discord's entitlements API to check for active subscriptions.
+    """
+    try:
+        # Get the SKU ID for Chromie Pro from environment or use a default
+        # The SKU ID would be provided by Discord when you set up subscriptions
+        SKU_ID = int(os.getenv("CHROMIE_PRO_SKU_ID", "0"))
+        
+        if not SKU_ID:
+            # SKU not configured, fall back to stored Pro status
+            return False
+        
+        # Fetch entitlements for the guild
+        # This checks if the guild has an active subscription
+        entitlements = await bot.http.get_entitlements(
+            guild_id=guild_id,
+            sku_ids=[SKU_ID],
+            exclude_expired=True  # Only get active subscriptions
+        )
+        
+        # If there are any entitlements, the guild has Pro
+        if entitlements:
+            return True
+        
+        return False
+    except Exception as e:
+        print(f"[ENTITLEMENTS] Error checking entitlements for guild {guild_id}: {e}")
+        # If entitlements check fails, fall back to stored Pro status
+        return False
+
+
+async def sync_discord_subscription(guild_id: int) -> bool:
+    """
+    Check Discord's entitlements API and sync Pro status if subscription is found.
+    Updates the guild state in JSON if subscription is active.
+    Returns True if Pro is now active.
+    """
+    has_subscription = await check_discord_entitlements(guild_id)
+    
+    if has_subscription:
+        # Guild has active subscription - update the state
+        guild_state = get_guild_state(guild_id)
+        now = datetime.utcnow()
+        
+        # Set Pro as active for a year (subscriptions auto-renew)
+        if "pro" not in guild_state:
+            guild_state["pro"] = {}
+        
+        guild_state["pro"]["pro_active"] = True
+        # Set pro_until to 1 year from now (subscriptions renew automatically)
+        guild_state["pro"]["pro_until"] = (now + timedelta(days=365)).isoformat()
+        guild_state["pro"]["discord_subscription"] = True  # Mark as Discord subscription
+        
+        save_state()
+        print(f"[ENTITLEMENTS] Synced Pro status for guild {guild_id}")
+        return True
+    
+    return False
 
 
 class ChromieBot(commands.Bot):
@@ -5770,10 +5841,59 @@ async def pro_status(interaction: discord.Interaction):
     
     pro_data = guild_state.get("pro", {})
     pro_until = pro_data.get("pro_until", "Not set")
+    is_discord_sub = pro_data.get("discord_subscription", False)
     
     embed.add_field(name="Pro Until", value=str(pro_until), inline=False)
+    if is_discord_sub:
+        embed.add_field(name="Type", value="Discord Subscription (Auto-renewing)", inline=False)
     
     await interaction.edit_original_response(embed=embed)
+
+
+@bot.tree.command(name="sync_subscription", description="Sync your Discord subscription status")
+@app_commands.checks.has_permissions(administrator=True)
+@app_commands.guild_only()
+async def sync_subscription(interaction: discord.Interaction):
+    """Sync Discord subscription status from Discord's servers"""
+    await interaction.response.defer(ephemeral=True)
+    
+    embed = discord.Embed(
+        title="🔄 Syncing Subscription...",
+        description="Checking Discord for active subscriptions...",
+        color=discord.Color.blue()
+    )
+    await interaction.edit_original_response(embed=embed)
+    
+    try:
+        # Try to sync the subscription
+        has_pro = await sync_discord_subscription(interaction.guild_id)
+        
+        if has_pro:
+            embed = discord.Embed(
+                title="✅ Subscription Synced!",
+                description="Your Discord subscription has been synced. You now have Chromie Pro!",
+                color=discord.Color.green()
+            )
+        else:
+            embed = discord.Embed(
+                title="❌ No Active Subscription",
+                description="No active Discord subscription found for Chromie Pro.",
+                color=discord.Color.red()
+            )
+            embed.add_field(
+                name="Need Pro?",
+                value="Subscribe to Chromie Pro via Discord Server Subscription for $2.99/month",
+                inline=False
+            )
+        
+        await interaction.edit_original_response(embed=embed)
+    except Exception as e:
+        embed = discord.Embed(
+            title="❌ Error Syncing",
+            description=f"Could not sync subscription: {str(e)}",
+            color=discord.Color.red()
+        )
+        await interaction.edit_original_response(embed=embed)
 
 
 # ==========================
