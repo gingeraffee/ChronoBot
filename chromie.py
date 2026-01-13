@@ -170,6 +170,69 @@ def require_vote(feature_label: str):
 
     return app_commands.check(predicate)
 
+
+# ==========================
+# PRO GATING (from spec - must be before build_embed_for_guild)
+# ==========================
+
+def has_active_vote_guild(guild_state: Dict[str, Any]) -> bool:
+    """Check if guild has an active vote (supporter status) - guild-level check."""
+    vote_until_str = guild_state.get("supporter", {}).get("vote_until")
+    if vote_until_str:
+        try:
+            vote_until = datetime.fromisoformat(vote_until_str)
+            if datetime.utcnow() < vote_until:
+                return True
+        except:
+            pass
+    return False
+
+def is_pro(guild_state: Dict[str, Any]) -> bool:
+    """
+    Check if guild has active Pro status.
+    Returns True if:
+    - pro_active is True AND pro_until is in future, OR
+    - grace_until is in future (migration grace period), OR
+    - migration_mode is True (soft rollout)
+    """
+    pro_data = guild_state.get("pro", {})
+    
+    if pro_data.get("pro_active", False):
+        pro_until_str = pro_data.get("pro_until")
+        if pro_until_str:
+            try:
+                pro_until = datetime.fromisoformat(pro_until_str)
+                if datetime.utcnow() < pro_until:
+                    return True
+            except:
+                pass
+    
+    grace_until_str = pro_data.get("grace_until")
+    if grace_until_str:
+        try:
+            grace_until = datetime.fromisoformat(grace_until_str)
+            if datetime.utcnow() < grace_until:
+                return True
+        except:
+            pass
+    
+    if pro_data.get("migration_mode", False):
+        return True
+    
+    return False
+
+def get_pro_status_text(guild_state: Dict[str, Any]) -> str:
+    """Get formatted Pro status for display."""
+    if is_pro(guild_state):
+        pro_data = guild_state.get("pro", {})
+        if pro_data.get("migration_mode", False):
+            return "✅ Pro Active (Migration Mode)"
+        if pro_data.get("grace_until"):
+            return "✅ Pro Active (Grace Period)"
+        return "✅ Pro Active"
+    return "🔒 Pro Locked"
+
+    
     
 # ==========================
 # STATE HANDLING
@@ -318,6 +381,18 @@ def get_guild_state(guild_id: int) -> dict:
                 "channel_id": None,
                 "last_sent_date": None,  # "YYYY-MM-DD"
             },
+            
+            # NEW (supporter/pro tracking - from spec)
+            "supporter": {
+                "last_vote_at": None,
+                "vote_until": None
+            },
+            "pro": {
+                "pro_active": False,
+                "pro_until": None,
+                "grace_until": None,
+                "migration_mode": True  # Soft launch mode
+            },
         }
 
     else:
@@ -334,6 +409,8 @@ def get_guild_state(guild_id: int) -> dict:
         guilds[gid].setdefault("default_milestones", DEFAULT_MILESTONES.copy())
         guilds[gid].setdefault("templates", {})
         guilds[gid].setdefault("digest", {"enabled": False, "channel_id": None, "last_sent_date": None})
+        guilds[gid].setdefault("supporter", {"last_vote_at": None, "vote_until": None})
+        guilds[gid].setdefault("pro", {"pro_active": False, "pro_until": None, "grace_until": None, "migration_mode": True})
     return guilds[gid]
 
 
@@ -2507,6 +2584,12 @@ def build_embed_for_guild(guild_state: dict) -> discord.Embed:
         header_lines.append(custom_intro)
     if theme_subtitle:
         header_lines.append(theme_subtitle)
+    
+    # Add Pro/Supporter status indicators (from spec)
+    supporter_status = "✅ Supporter" if has_active_vote_guild(guild_state) else "🔒 Supporter"
+    pro_status_txt = get_pro_status_text(guild_state)
+    status_line = f"**Status:** {supporter_status} • {pro_status_txt}"
+    header_lines.append(status_line)
 
     header = "\n".join(header_lines).strip() or "📅 Upcoming events:"
     footer = layout.get("footer", "")
@@ -2535,11 +2618,14 @@ def build_embed_for_guild(guild_state: dict) -> discord.Embed:
         minutes = (delta.seconds % 3600) // 60
 
         name = str(ev.get("name", "Untitled Event"))[:256]  # avoid absurdly long names
+        
+        # Use dynamic Discord timestamps (from spec) - client-side updates!
+        unix_ts = int(dt.timestamp())
 
         lines = [
-            f"{emoji} {name}",
-            f"🕒 {days} days • {hours} hours • {minutes} minutes remaining",
-            f"📅 {dt.strftime('%B %d, %Y • %I:%M %p %Z')}",
+            f"{emoji} **{name}**",
+            f"**When:** <t:{unix_ts}:F>",  # Full date/time
+            f"**Countdown:** <t:{unix_ts}:R>",  # Relative time (auto-updates!)
         ]
 
         owner_id = ev.get("owner_user_id")
@@ -2569,7 +2655,10 @@ def build_embed_for_guild(guild_state: dict) -> discord.Embed:
     embed.description = body
 
     if footer:
+        footer = f"{footer} • Times update automatically"
         embed.set_footer(text=footer[:2048])
+    else:
+        embed.set_footer(text="Times update automatically • Use /chronohelp for commands")
 
     if banner_url:
         embed.set_image(url=banner_url)
@@ -5007,3 +5096,63 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# ==========================
+
+
+# ==========================
+# OWNER-ONLY COMMANDS (from spec)
+# ==========================
+
+@bot.tree.command(name="owner_unlock", description="[Owner] Temporarily unlock features")
+@app_commands.describe(
+    feature="supporter or pro",
+    duration_hours="Hours to unlock (default 12)"
+)
+async def owner_unlock_command(
+    interaction: discord.Interaction,
+    feature: str,
+    duration_hours: int = 12
+):
+    """Owner-only temporary unlock."""
+    if interaction.user.id != bot.application_info_cached.owner.id if hasattr(bot, 'application_info_cached') else None:
+        # Try to get owner ID
+        if not hasattr(bot, 'application_info_cached'):
+            try:
+                app_info = await bot.application_info()
+                bot.application_info_cached = app_info
+            except:
+                await interaction.response.send_message("❌ Owner only", ephemeral=True)
+                return
+        
+        if interaction.user.id != bot.application_info_cached.owner.id:
+            await interaction.response.send_message("❌ Owner only", ephemeral=True)
+            return
+    
+    guild_state = get_guild_state(interaction.guild_id)
+    now = datetime.utcnow()
+    until = now + timedelta(hours=duration_hours)
+    
+    if feature.lower() == "supporter":
+        if "supporter" not in guild_state:
+            guild_state["supporter"] = {}
+        guild_state["supporter"]["last_vote_at"] = now.isoformat()
+        guild_state["supporter"]["vote_until"] = until.isoformat()
+        msg = f"✅ Supporter unlocked for {duration_hours} hours"
+    elif feature.lower() == "pro":
+        if "pro" not in guild_state:
+            guild_state["pro"] = {}
+        guild_state["pro"]["pro_active"] = True
+        guild_state["pro"]["pro_until"] = until.isoformat()
+        msg = f"✅ Pro unlocked for {duration_hours} hours"
+    else:
+        await interaction.response.send_message("❌ Invalid feature (use: supporter or pro)", ephemeral=True)
+        return
+    
+    save_state()
+    try:
+        await refresh_countdown_message(interaction.guild, guild_state)
+    except:
+        pass
+    
+    await interaction.response.send_message(msg, ephemeral=True)
