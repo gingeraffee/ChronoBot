@@ -768,12 +768,19 @@ async def check_discord_entitlements(guild_id: int) -> bool:
             print("[ENTITLEMENTS] SKU ID not configured")
             return False
         
+        # Get the bot's application ID
+        app_id = bot.application.id if bot.application else None
+        if not app_id:
+            print("[ENTITLEMENTS] Could not get bot application ID")
+            return False
+        
         # Fetch entitlements for the guild using the REST API
         # This checks if the guild has an active subscription
         try:
             # Use the bot's HTTP client to get entitlements
-            # exclude_ended=True means only get active subscriptions
+            # Need to provide application_id, guild_id, sku_ids, and exclude_ended
             entitlements = await bot.http.get_entitlements(
+                application_id=app_id,
                 guild_id=guild_id,
                 sku_ids=[int(SKU_ID)],
                 exclude_ended=True  # Only get active subscriptions
