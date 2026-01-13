@@ -5317,7 +5317,340 @@ async def chronohelp(interaction: discord.Interaction):
         ephemeral=True,
     )
 
+# ==========================
+# TIMEZONE COMMANDS
+# ==========================
 
+@bot.tree.command(name="timezone_set", description="Set your server's timezone for event scheduling")
+@app_commands.describe(timezone="Timezone name (e.g., US/Eastern, Europe/London, Asia/Tokyo)")
+@app_commands.checks.has_permissions(administrator=True)
+@app_commands.guild_only()
+async def timezone_set(interaction: discord.Interaction, timezone: str):
+    """Set the server's timezone"""
+    await interaction.response.defer(ephemeral=True)
+    
+    import pytz
+    timezone = timezone.strip()
+    
+    # Validate timezone
+    try:
+        pytz.timezone(timezone)
+    except pytz.exceptions.UnknownTimeZoneError:
+        embed = discord.Embed(
+            title="❌ Invalid Timezone",
+            description=f"`{timezone}` is not a valid timezone.\n\nUse `/timezone_list` to see valid options.",
+            color=discord.Color.red()
+        )
+        await interaction.edit_original_response(embed=embed)
+        return
+    
+    # Set the timezone
+    try:
+        set_server_timezone(interaction.guild_id, timezone)
+        
+        embed = discord.Embed(
+            title="✅ Timezone Updated",
+            description=f"Server timezone has been set to **{timezone}**\n\n"
+                       "All event reminders will now be calculated based on this timezone.",
+            color=discord.Color.green()
+        )
+        embed.set_footer(text=f"Set by {interaction.user.name}")
+        await interaction.edit_original_response(embed=embed)
+    except Exception as e:
+        embed = discord.Embed(
+            title="❌ Error Setting Timezone",
+            description=f"An error occurred: {str(e)}",
+            color=discord.Color.red()
+        )
+        await interaction.edit_original_response(embed=embed)
+
+
+@bot.tree.command(name="timezone_view", description="View your server's current timezone")
+@app_commands.guild_only()
+async def timezone_view(interaction: discord.Interaction):
+    """View the server's timezone"""
+    await interaction.response.defer(ephemeral=True)
+    
+    try:
+        current_tz = get_server_timezone(interaction.guild_id)
+        
+        embed = discord.Embed(
+            title="🌍 Server Timezone",
+            description=f"**Current timezone:** `{current_tz}`",
+            color=discord.Color.blue()
+        )
+        embed.add_field(
+            name="Change timezone",
+            value="Use `/timezone_set <timezone>` to change.\nExample: `/timezone_set US/Eastern`",
+            inline=False
+        )
+        embed.add_field(
+            name="View options",
+            value="Use `/timezone_list` to see common timezone options.",
+            inline=False
+        )
+        await interaction.edit_original_response(embed=embed)
+    except Exception as e:
+        embed = discord.Embed(
+            title="❌ Error",
+            description=f"Could not retrieve timezone: {str(e)}",
+            color=discord.Color.red()
+        )
+        await interaction.edit_original_response(embed=embed)
+
+
+@bot.tree.command(name="timezone_list", description="List available timezones")
+async def timezone_list(interaction: discord.Interaction):
+    """List common timezones"""
+    await interaction.response.defer(ephemeral=True)
+    
+    common_zones = {
+        "🇺🇸 US Timezones": [
+            "US/Eastern",
+            "US/Central",
+            "US/Mountain",
+            "US/Pacific",
+            "US/Alaska",
+            "US/Hawaii"
+        ],
+        "🇨🇦 Canada": [
+            "Canada/Eastern",
+            "Canada/Central",
+            "Canada/Mountain",
+            "Canada/Pacific"
+        ],
+        "🇪🇺 Europe": [
+            "Europe/London",
+            "Europe/Paris",
+            "Europe/Berlin",
+            "Europe/Rome",
+            "Europe/Madrid",
+            "Europe/Amsterdam"
+        ],
+        "🌏 Asia": [
+            "Asia/Tokyo",
+            "Asia/Shanghai",
+            "Asia/Hong_Kong",
+            "Asia/Singapore",
+            "Asia/Bangkok",
+            "Asia/Dubai",
+            "Asia/Kolkata"
+        ],
+        "🦘 Oceania": [
+            "Australia/Sydney",
+            "Australia/Melbourne",
+            "Australia/Brisbane",
+            "Pacific/Auckland"
+        ],
+        "🌐 Other": [
+            "UTC",
+            "Brazil/East",
+            "Mexico/General"
+        ]
+    }
+    
+    embed = discord.Embed(
+        title="🌏 Common Timezones",
+        description="Below are common timezone options. Use `/timezone_set <timezone>` to set your server's timezone.",
+        color=discord.Color.blue()
+    )
+    
+    for region, zones in common_zones.items():
+        zones_str = ", ".join([f"`{z}`" for z in zones])
+        embed.add_field(
+            name=region,
+            value=zones_str,
+            inline=False
+        )
+    
+    embed.set_footer(text="For a complete list of timezones, visit: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones")
+    
+    await interaction.edit_original_response(embed=embed)
+
+
+# ==========================
+# REMINDER TIME COMMANDS
+# ==========================
+
+def validate_time_format(time_str: str) -> bool:
+    """Validate time format HH:MM (24-hour)"""
+    try:
+        datetime.strptime(time_str.strip(), "%H:%M")
+        return True
+    except ValueError:
+        return False
+
+
+@bot.tree.command(name="editevent_reminder", description="Set a custom reminder time for an event")
+@app_commands.describe(
+    event_index="Event number (see /listevents)",
+    reminder_time="Time for reminders in HH:MM format (24-hour). Example: 09:00"
+)
+@app_commands.checks.has_permissions(manage_messages=True)
+@app_commands.guild_only()
+async def editevent_reminder(
+    interaction: discord.Interaction,
+    event_index: int,
+    reminder_time: Optional[str] = None
+):
+    """
+    Set a custom reminder time for an event
+    
+    Usage:
+        /editevent_reminder event_index:1 reminder_time:09:00
+        /editevent_reminder event_index:2 reminder_time:14:30
+    """
+    await interaction.response.defer(ephemeral=True)
+    
+    try:
+        guild_state = get_guild_state(interaction.guild_id)
+        events = guild_state.get("events", [])
+        
+        # Validate event index (1-based from user, 0-based internally)
+        if event_index < 1 or event_index > len(events):
+            embed = discord.Embed(
+                title="❌ Invalid Event Number",
+                description=f"Event number must be between 1 and {len(events)}.\n\n"
+                           f"Use `/listevents` to see your events.",
+                color=discord.Color.red()
+            )
+            await interaction.edit_original_response(embed=embed)
+            return
+        
+        event_idx = event_index - 1  # Convert to 0-based
+        event = events[event_idx]
+        event_name = event.get("name", "Unknown Event")
+        
+        # If no reminder_time provided, show current setting
+        if reminder_time is None:
+            current_time = get_event_reminder_time(interaction.guild_id, event_idx)
+            
+            if current_time:
+                embed = discord.Embed(
+                    title=f"⏰ {event_name}",
+                    description=f"**Current reminder time:** `{current_time}`\n\n"
+                               f"To change it, use:\n"
+                               f"`/editevent_reminder event_index:{event_index} reminder_time:HH:MM`\n\n"
+                               f"Example: `/editevent_reminder event_index:{event_index} reminder_time:09:00`",
+                    color=discord.Color.blue()
+                )
+            else:
+                embed = discord.Embed(
+                    title=f"⏰ {event_name}",
+                    description=f"**Reminder time:** Using event time (not customized)\n\n"
+                               f"To set a custom time, use:\n"
+                               f"`/editevent_reminder event_index:{event_index} reminder_time:HH:MM`\n\n"
+                               f"Example: `/editevent_reminder event_index:{event_index} reminder_time:09:00`",
+                    color=discord.Color.blue()
+                )
+            await interaction.edit_original_response(embed=embed)
+            return
+        
+        # Validate reminder_time format
+        reminder_time = reminder_time.strip()
+        if not validate_time_format(reminder_time):
+            embed = discord.Embed(
+                title="❌ Invalid Time Format",
+                description=f"`{reminder_time}` is not a valid time.\n\n"
+                           f"Use 24-hour format: `HH:MM`\n\n"
+                           f"Examples:\n"
+                           f"• `09:00` (9:00 AM)\n"
+                           f"• `14:30` (2:30 PM)\n"
+                           f"• `23:59` (11:59 PM)",
+                color=discord.Color.red()
+            )
+            await interaction.edit_original_response(embed=embed)
+            return
+        
+        # Set the reminder time
+        success = set_event_reminder_time(interaction.guild_id, event_idx, reminder_time)
+        
+        if success:
+            embed = discord.Embed(
+                title="✅ Reminder Time Updated",
+                description=f"**{event_name}** reminders will now send at **{reminder_time}**",
+                color=discord.Color.green()
+            )
+            embed.add_field(
+                name="ℹ️ What this means",
+                value=f"Milestone reminders (100 days, 60 days, etc.) will send at the event time.\n"
+                      f"The final day-of reminder will send at **{reminder_time}** instead of the event time.",
+                inline=False
+            )
+            await interaction.edit_original_response(embed=embed)
+        else:
+            embed = discord.Embed(
+                title="❌ Error",
+                description=f"Could not update reminder time for event #{event_index}.",
+                color=discord.Color.red()
+            )
+            await interaction.edit_original_response(embed=embed)
+    
+    except Exception as e:
+        embed = discord.Embed(
+            title="❌ Error",
+            description=f"An error occurred: {str(e)}",
+            color=discord.Color.red()
+        )
+        await interaction.edit_original_response(embed=embed)
+
+
+@bot.tree.command(name="clear_reminder_time", description="Clear custom reminder time for an event")
+@app_commands.describe(event_index="Event number (see /listevents)")
+@app_commands.checks.has_permissions(manage_messages=True)
+@app_commands.guild_only()
+async def clear_reminder_time(interaction: discord.Interaction, event_index: int):
+    """
+    Clear custom reminder time for an event (revert to using event time)
+    
+    Usage:
+        /clear_reminder_time event_index:1
+    """
+    await interaction.response.defer(ephemeral=True)
+    
+    try:
+        guild_state = get_guild_state(interaction.guild_id)
+        events = guild_state.get("events", [])
+        
+        # Validate event index
+        if event_index < 1 or event_index > len(events):
+            embed = discord.Embed(
+                title="❌ Invalid Event Number",
+                description=f"Event number must be between 1 and {len(events)}.",
+                color=discord.Color.red()
+            )
+            await interaction.edit_original_response(embed=embed)
+            return
+        
+        event_idx = event_index - 1
+        event = events[event_idx]
+        event_name = event.get("name", "Unknown Event")
+        
+        # Clear the reminder time (set to None)
+        success = set_event_reminder_time(interaction.guild_id, event_idx, None)
+        
+        if success:
+            embed = discord.Embed(
+                title="✅ Reminder Time Cleared",
+                description=f"**{event_name}** will now send reminders at the event time (not customized).",
+                color=discord.Color.green()
+            )
+            await interaction.edit_original_response(embed=embed)
+        else:
+            embed = discord.Embed(
+                title="❌ Error",
+                description=f"Could not clear reminder time for event #{event_index}.",
+                color=discord.Color.red()
+            )
+            await interaction.edit_original_response(embed=embed)
+    
+    except Exception as e:
+        embed = discord.Embed(
+            title="❌ Error",
+            description=f"An error occurred: {str(e)}",
+            color=discord.Color.red()
+        )
+        await interaction.edit_original_response(embed=embed)
 
 # ==========================
 # RUN
