@@ -398,6 +398,74 @@ def save_state():
         except Exception as e:
             print(f"[STATE] save_state failed: {type(e).__name__}: {e}")
 
+
+# ==========================
+# TIMEZONE & REMINDER TIME FUNCTIONS
+# ==========================
+
+def get_server_timezone(guild_id: int) -> str:
+    """
+    Get server's timezone setting.
+    Returns the timezone string (e.g., 'US/Eastern', 'UTC')
+    Defaults to 'UTC' if not set.
+    """
+    guild_state = get_guild_state(guild_id)
+    return guild_state.get("timezone", "UTC")
+
+
+def set_server_timezone(guild_id: int, timezone: str) -> None:
+    """
+    Set server's timezone setting.
+    Args:
+        guild_id: The Discord guild ID
+        timezone: Timezone string (e.g., 'US/Eastern', 'Europe/London')
+    """
+    guild_state = get_guild_state(guild_id)
+    guild_state["timezone"] = timezone
+    save_state()
+
+
+def get_event_reminder_time(guild_id: int, event_index: int) -> Optional[str]:
+    """
+    Get custom reminder time for an event.
+    Returns the time string (e.g., '09:00') or None if not set.
+    
+    Args:
+        guild_id: The Discord guild ID
+        event_index: The event index (0-based)
+    
+    Returns:
+        Time string in HH:MM format, or None if using event time
+    """
+    guild_state = get_guild_state(guild_id)
+    events = guild_state.get("events", [])
+    
+    if event_index < len(events):
+        return events[event_index].get("reminder_time", None)
+    return None
+
+
+def set_event_reminder_time(guild_id: int, event_index: int, reminder_time: Optional[str]) -> bool:
+    """
+    Set custom reminder time for an event.
+    
+    Args:
+        guild_id: The Discord guild ID
+        event_index: The event index (0-based)
+        reminder_time: Time string in HH:MM format, or None to use event time
+    
+    Returns:
+        True if successful, False if event not found
+    """
+    guild_state = get_guild_state(guild_id)
+    events = guild_state.get("events", [])
+    
+    if event_index < len(events):
+        events[event_index]["reminder_time"] = reminder_time
+        save_state()
+        return True
+    return False
+
 # ==========================
 # STATE INIT (must exist globally)
 # ==========================
