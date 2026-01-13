@@ -5534,17 +5534,56 @@ def validate_time_format(time_str: str) -> bool:
         return False
 
 
+# ==========================
+# EVENT INDEX AUTOCOMPLETE
+# ==========================
+
+async def event_index_autocomplete(
+    interaction: discord.Interaction,
+    current: str,
+) -> List[app_commands.Choice[int]]:
+    """Autocomplete for event index with event names"""
+    try:
+        guild_state = get_guild_state(interaction.guild_id)
+        events = guild_state.get("events", [])
+        
+        if not events:
+            return []
+        
+        # Create choices showing event names
+        choices = []
+        current_lower = (current or "").lower()
+        
+        for idx, event in enumerate(events):
+            event_name = event.get("name", f"Event {idx + 1}")
+            # 1-based indexing for display
+            display_index = idx + 1
+            
+            # Filter based on user input (search by name or index number)
+            if current_lower:
+                if not (current_lower in event_name.lower() or current_lower in str(display_index)):
+                    continue
+            
+            choice_name = f"{display_index}. {event_name}"
+            choices.append(app_commands.Choice(name=choice_name, value=display_index))
+        
+        return choices[:25]  # Return top 25
+    except Exception:
+        return []
+
+
 @bot.tree.command(name="editevent_reminder", description="Set a custom reminder time for an event")
 @app_commands.describe(
-    event_index="Event number (see /listevents)",
+    event_index="Select the event (or type to search by name/number)",
     reminder_time="Time for reminders in HH:MM format (24-hour). Example: 09:00"
 )
+@app_commands.autocomplete(event_index=event_index_autocomplete)
 @app_commands.checks.has_permissions(manage_messages=True)
 @app_commands.guild_only()
 async def editevent_reminder(
     interaction: discord.Interaction,
     event_index: int,
-    reminder_time: Optional[str] = None
+    reminder_time: str
 ):
     """
     Set a custom reminder time for an event
@@ -5563,8 +5602,7 @@ async def editevent_reminder(
         if event_index < 1 or event_index > len(events):
             embed = discord.Embed(
                 title="❌ Invalid Event Number",
-                description=f"Event number must be between 1 and {len(events)}.\n\n"
-                           f"Use `/listevents` to see your events.",
+                description=f"Event number must be between 1 and {len(events)}.",
                 color=discord.Color.red()
             )
             await interaction.edit_original_response(embed=embed)
@@ -5573,31 +5611,6 @@ async def editevent_reminder(
         event_idx = event_index - 1  # Convert to 0-based
         event = events[event_idx]
         event_name = event.get("name", "Unknown Event")
-        
-        # If no reminder_time provided, show current setting
-        if reminder_time is None:
-            current_time = get_event_reminder_time(interaction.guild_id, event_idx)
-            
-            if current_time:
-                embed = discord.Embed(
-                    title=f"⏰ {event_name}",
-                    description=f"**Current reminder time:** `{current_time}`\n\n"
-                               f"To change it, use:\n"
-                               f"`/editevent_reminder event_index:{event_index} reminder_time:HH:MM`\n\n"
-                               f"Example: `/editevent_reminder event_index:{event_index} reminder_time:09:00`",
-                    color=discord.Color.blue()
-                )
-            else:
-                embed = discord.Embed(
-                    title=f"⏰ {event_name}",
-                    description=f"**Reminder time:** Using event time (not customized)\n\n"
-                               f"To set a custom time, use:\n"
-                               f"`/editevent_reminder event_index:{event_index} reminder_time:HH:MM`\n\n"
-                               f"Example: `/editevent_reminder event_index:{event_index} reminder_time:09:00`",
-                    color=discord.Color.blue()
-                )
-            await interaction.edit_original_response(embed=embed)
-            return
         
         # Validate reminder_time format
         reminder_time = reminder_time.strip()
@@ -5649,7 +5662,8 @@ async def editevent_reminder(
 
 
 @bot.tree.command(name="clear_reminder_time", description="Clear custom reminder time for an event")
-@app_commands.describe(event_index="Event number (see /listevents)")
+@app_commands.describe(event_index="Select the event (or type to search by name/number)")
+@app_commands.autocomplete(event_index=event_index_autocomplete)
 @app_commands.checks.has_permissions(manage_messages=True)
 @app_commands.guild_only()
 async def clear_reminder_time(interaction: discord.Interaction, event_index: int):
