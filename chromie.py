@@ -1209,7 +1209,7 @@ HELP_PAGES = {
     },
     "reminders": {
         "title": "Reminders",
-        "desc": "Milestones + manual reminders + repeating reminders.",
+        "desc": "Milestones + manual reminders + repeating reminders + timezone settings.",
         "lines": [
             "`/remindall index:` — post a reminder now",
             "`/setmilestones index: milestones:` — custom milestone days",
@@ -1217,6 +1217,10 @@ HELP_PAGES = {
             "`/silence index:` — stop reminders for an event",
             "`/setrepeat index: every_days:` — 💎 repeat reminders (Pro)",
             "`/clearrepeat index:` — 💎 turn repeat off (Pro)",
+            "`/timezone_set timezone:` — set server timezone",
+            "`/timezone_view` — view current timezone",
+            "`/editevent_reminder index: reminder_time:` — custom reminder time",
+            "`/clear_reminder_time index:` — remove custom reminder time",
         ],
     },
     "customize": {
@@ -5317,12 +5321,67 @@ async def chronohelp(interaction: discord.Interaction):
         ephemeral=True,
     )
 
+
+# ==========================
+# TIMEZONE AUTOCOMPLETE
+# ==========================
+
+async def timezone_autocomplete(
+    interaction: discord.Interaction,
+    current: str,
+) -> List[app_commands.Choice[str]]:
+    """Autocomplete for timezone selection"""
+    import pytz
+    
+    # Get all available timezones
+    all_timezones = pytz.all_timezones
+    
+    # Filter based on user input
+    current_lower = (current or "").lower()
+    
+    # Prioritize common timezones
+    common_first = [
+        "UTC",
+        "US/Eastern",
+        "US/Central",
+        "US/Mountain",
+        "US/Pacific",
+        "Europe/London",
+        "Europe/Paris",
+        "Asia/Tokyo",
+        "Australia/Sydney",
+    ]
+    
+    # Separate common and other timezones
+    common_matches = []
+    other_matches = []
+    
+    for tz in all_timezones:
+        if current_lower and current_lower not in tz.lower():
+            continue
+        
+        if tz in common_first:
+            common_matches.append(tz)
+        else:
+            other_matches.append(tz)
+    
+    # Sort and combine (common first, then others)
+    matches = sorted(common_matches) + sorted(other_matches)
+    
+    # Return top 25 matches as choices
+    return [
+        app_commands.Choice(name=tz, value=tz)
+        for tz in matches[:25]
+    ]
+
+
 # ==========================
 # TIMEZONE COMMANDS
 # ==========================
 
 @bot.tree.command(name="timezone_set", description="Set your server's timezone for event scheduling")
-@app_commands.describe(timezone="Timezone name (e.g., US/Eastern, Europe/London, Asia/Tokyo)")
+@app_commands.describe(timezone="Timezone (type to search, e.g., 'Eastern', 'Tokyo', 'London')")
+@app_commands.autocomplete(timezone=timezone_autocomplete)
 @app_commands.checks.has_permissions(administrator=True)
 @app_commands.guild_only()
 async def timezone_set(interaction: discord.Interaction, timezone: str):
@@ -5338,7 +5397,7 @@ async def timezone_set(interaction: discord.Interaction, timezone: str):
     except pytz.exceptions.UnknownTimeZoneError:
         embed = discord.Embed(
             title="❌ Invalid Timezone",
-            description=f"`{timezone}` is not a valid timezone.\n\nUse `/timezone_list` to see valid options.",
+            description=f"`{timezone}` is not a valid timezone.\n\nPlease select from the autocomplete suggestions.",
             color=discord.Color.red()
         )
         await interaction.edit_original_response(embed=embed)
@@ -5381,12 +5440,7 @@ async def timezone_view(interaction: discord.Interaction):
         )
         embed.add_field(
             name="Change timezone",
-            value="Use `/timezone_set <timezone>` to change.\nExample: `/timezone_set US/Eastern`",
-            inline=False
-        )
-        embed.add_field(
-            name="View options",
-            value="Use `/timezone_list` to see common timezone options.",
+            value="Use `/timezone_set` and start typing to search for a timezone.",
             inline=False
         )
         await interaction.edit_original_response(embed=embed)
@@ -5397,75 +5451,6 @@ async def timezone_view(interaction: discord.Interaction):
             color=discord.Color.red()
         )
         await interaction.edit_original_response(embed=embed)
-
-
-@bot.tree.command(name="timezone_list", description="List available timezones")
-async def timezone_list(interaction: discord.Interaction):
-    """List common timezones"""
-    await interaction.response.defer(ephemeral=True)
-    
-    common_zones = {
-        "🇺🇸 US Timezones": [
-            "US/Eastern",
-            "US/Central",
-            "US/Mountain",
-            "US/Pacific",
-            "US/Alaska",
-            "US/Hawaii"
-        ],
-        "🇨🇦 Canada": [
-            "Canada/Eastern",
-            "Canada/Central",
-            "Canada/Mountain",
-            "Canada/Pacific"
-        ],
-        "🇪🇺 Europe": [
-            "Europe/London",
-            "Europe/Paris",
-            "Europe/Berlin",
-            "Europe/Rome",
-            "Europe/Madrid",
-            "Europe/Amsterdam"
-        ],
-        "🌏 Asia": [
-            "Asia/Tokyo",
-            "Asia/Shanghai",
-            "Asia/Hong_Kong",
-            "Asia/Singapore",
-            "Asia/Bangkok",
-            "Asia/Dubai",
-            "Asia/Kolkata"
-        ],
-        "🦘 Oceania": [
-            "Australia/Sydney",
-            "Australia/Melbourne",
-            "Australia/Brisbane",
-            "Pacific/Auckland"
-        ],
-        "🌐 Other": [
-            "UTC",
-            "Brazil/East",
-            "Mexico/General"
-        ]
-    }
-    
-    embed = discord.Embed(
-        title="🌏 Common Timezones",
-        description="Below are common timezone options. Use `/timezone_set <timezone>` to set your server's timezone.",
-        color=discord.Color.blue()
-    )
-    
-    for region, zones in common_zones.items():
-        zones_str = ", ".join([f"`{z}`" for z in zones])
-        embed.add_field(
-            name=region,
-            value=zones_str,
-            inline=False
-        )
-    
-    embed.set_footer(text="For a complete list of timezones, visit: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones")
-    
-    await interaction.edit_original_response(embed=embed)
 
 
 # ==========================
@@ -5651,6 +5636,8 @@ async def clear_reminder_time(interaction: discord.Interaction, event_index: int
             color=discord.Color.red()
         )
         await interaction.edit_original_response(embed=embed)
+
+
 
 # ==========================
 # RUN
