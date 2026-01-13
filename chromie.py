@@ -4,13 +4,15 @@ import traceback
 from pathlib import Path
 from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
-from typing import Optional, List, Tuple, Dict, Any
+from typing import Optional, List, Tuple, Dict, Any, Set
 import time
 import discord
 from discord.errors import NotFound, HTTPException
 from discord.ext import commands, tasks
 from discord import app_commands
 from threading import Lock
+from enum import IntEnum
+from dataclasses import dataclass
 import random
 import re
 import aiohttp
@@ -21,7 +23,7 @@ from discord.errors import NotFound as DiscordNotFound, Forbidden as DiscordForb
 # CONFIG
 # ==========================
 
-VERSION = "2025-12-29"
+VERSION = "2026-01-11"
 
 DEFAULT_TZ = ZoneInfo("America/Chicago")
 UPDATE_INTERVAL_SECONDS = 60
@@ -54,6 +56,7 @@ def log_throttled(guild_id: int, code: str, msg: str):
     if now - last >= LOG_THROTTLE_SECONDS:
         _last_log[key] = now
         print(msg)
+
 
 # ==========================
 # TOP.GG VOTE GATING
