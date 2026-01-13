@@ -135,8 +135,11 @@ async def topgg_has_voted(user_id: int, *, force: bool = False) -> bool:
 
 async def send_vote_required(interaction: discord.Interaction, feature_label: str):
     content = (
-        f"🗳️ **Vote required** to use **{feature_label}**.\n"
-        "Vote on Top.gg, then try again!"
+        f"⭐ **Supporter feature:** {feature_label}\n\n"
+        f"🗳️ **Option 1: Vote on Top.gg** (free, lasts 12 hours)\n"
+        f"Vote takes 10 seconds, then try again!\n\n"
+        f"💎 **Option 2: Chromie Pro** ($2.99/mo)\n"
+        f"Get all Supporter features permanently + unlimited events, templates, recurring reminders, and more."
     )
     view = build_vote_view()  # whatever you already use
 
@@ -154,6 +157,12 @@ async def send_vote_required(interaction: discord.Interaction, feature_label: st
 
 def require_vote(feature_label: str):
     async def predicate(interaction: discord.Interaction) -> bool:
+        # Pro users get all Supporter features without voting
+        if interaction.guild_id:
+            guild_state = get_guild_state(interaction.guild_id)
+            if is_pro(guild_state):
+                return True
+        
         user_id = interaction.user.id
 
         # Only check if they have voted in the last 12 hours
@@ -394,9 +403,32 @@ def save_state():
 # ==========================
 
 state = load_state()
-for _, g_state in state.get("guilds", {}).items():
+
+# MIGRATION: Disable migration_mode for all guilds to enforce tier limits
+migration_applied = False
+for guild_id_str, g_state in state.get("guilds", {}).items():
     sort_events(g_state)
-save_state()
+    
+    # Ensure pro structure exists and disable migration_mode
+    if "pro" not in g_state:
+        g_state["pro"] = {
+            "pro_active": False,
+            "pro_until": None,
+            "grace_until": None,
+            "migration_mode": False
+        }
+        migration_applied = True
+    elif g_state["pro"].get("migration_mode", False):
+        # Disable migration_mode to enforce tier limits
+        g_state["pro"]["migration_mode"] = False
+        migration_applied = True
+        print(f"[MIGRATION] Disabled migration_mode for guild {guild_id_str}")
+
+if migration_applied:
+    print("[MIGRATION] Tier limits now enforced for all guilds")
+    save_state()
+else:
+    save_state()
 
 
 def get_guild_state(guild_id: int) -> dict:
@@ -435,7 +467,7 @@ def get_guild_state(guild_id: int) -> dict:
                 "pro_active": False,
                 "pro_until": None,
                 "grace_until": None,
-                "migration_mode": True  # Soft launch mode
+                "migration_mode": False  # Disabled - tier limits now enforced
             },
         }
 
@@ -454,7 +486,7 @@ def get_guild_state(guild_id: int) -> dict:
         guilds[gid].setdefault("templates", {})
         guilds[gid].setdefault("digest", {"enabled": False, "channel_id": None, "last_sent_date": None})
         guilds[gid].setdefault("supporter", {"last_vote_at": None, "vote_until": None})
-        guilds[gid].setdefault("pro", {"pro_active": False, "pro_until": None, "grace_until": None, "migration_mode": True})
+        guilds[gid].setdefault("pro", {"pro_active": False, "pro_until": None, "grace_until": None, "migration_mode": False})
     return guilds[gid]
 
 
