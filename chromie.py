@@ -210,19 +210,39 @@ def is_pro(guild_state: Dict[str, Any]) -> bool:
         pro_until_str = pro_data.get("pro_until")
         if pro_until_str:
             try:
+                # Handle both timezone-aware and naive datetimes
                 pro_until = datetime.fromisoformat(pro_until_str)
-                if datetime.utcnow() < pro_until:
+                now = datetime.utcnow()
+                
+                # If pro_until is timezone-aware, make now timezone-aware too
+                if pro_until.tzinfo is not None and now.tzinfo is None:
+                    now = now.replace(tzinfo=pro_until.tzinfo)
+                # If pro_until is naive, make sure now is naive too
+                elif pro_until.tzinfo is None and now.tzinfo is not None:
+                    pro_until = pro_until.replace(tzinfo=now.tzinfo)
+                
+                if now < pro_until:
                     return True
-            except:
+            except Exception as e:
+                print(f"[PRO] Error parsing pro_until: {pro_until_str}, error: {e}")
                 pass
     
     grace_until_str = pro_data.get("grace_until")
     if grace_until_str:
         try:
             grace_until = datetime.fromisoformat(grace_until_str)
-            if datetime.utcnow() < grace_until:
+            now = datetime.utcnow()
+            
+            # Handle timezone-aware dates
+            if grace_until.tzinfo is not None and now.tzinfo is None:
+                now = now.replace(tzinfo=grace_until.tzinfo)
+            elif grace_until.tzinfo is None and now.tzinfo is not None:
+                grace_until = grace_until.replace(tzinfo=now.tzinfo)
+            
+            if now < grace_until:
                 return True
-        except:
+        except Exception as e:
+            print(f"[PRO] Error parsing grace_until: {grace_until_str}, error: {e}")
             pass
     
     if pro_data.get("migration_mode", False):
@@ -5802,3 +5822,86 @@ async def owner_unlock_command(
         pass
     
     await interaction.response.send_message(msg, ephemeral=True)
+
+
+@bot.tree.command(name="checkpro", description="[Admin] Check your server's Pro status")
+@app_commands.checks.has_permissions(administrator=True)
+@app_commands.guild_only()
+async def checkpro(interaction: discord.Interaction):
+    """Check Pro subscription status for debugging"""
+    await interaction.response.defer(ephemeral=True)
+    
+    guild_state = get_guild_state(interaction.guild_id)
+    pro_data = guild_state.get("pro", {})
+    
+    # Detailed status
+    pro_active = pro_data.get("pro_active", False)
+    pro_until_str = pro_data.get("pro_until")
+    grace_until_str = pro_data.get("grace_until")
+    migration_mode = pro_data.get("migration_mode", False)
+    
+    # Check if actually pro
+    is_pro_now = is_pro(guild_state)
+    
+    embed = discord.Embed(
+        title="🔍 Pro Status Check",
+        color=discord.Color.green() if is_pro_now else discord.Color.red()
+    )
+    
+    embed.add_field(
+        name="Overall Status",
+        value=f"{'✅ **PRO ACTIVE**' if is_pro_now else '❌ **NOT PRO**'}",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="Pro Active Flag",
+        value=f"`{pro_active}`",
+        inline=True
+    )
+    
+    embed.add_field(
+        name="Pro Until",
+        value=pro_until_str or "Not set",
+        inline=True
+    )
+    
+    if pro_until_str:
+        try:
+            pro_until = datetime.fromisoformat(pro_until_str)
+            now = datetime.utcnow()
+            remaining = pro_until - now
+            if remaining.total_seconds() > 0:
+                embed.add_field(
+                    name="Time Remaining",
+                    value=f"{int(remaining.total_seconds() // 3600)} hours",
+                    inline=True
+                )
+            else:
+                embed.add_field(
+                    name="Status",
+                    value="⏰ Expired",
+                    inline=True
+                )
+        except Exception as e:
+            embed.add_field(
+                name="Error",
+                value=f"Could not parse date: {e}",
+                inline=True
+            )
+    
+    embed.add_field(
+        name="Grace Until",
+        value=grace_until_str or "Not set",
+        inline=True
+    )
+    
+    embed.add_field(
+        name="Migration Mode",
+        value=f"`{migration_mode}`",
+        inline=True
+    )
+    
+    embed.set_footer(text="Use /owner_unlock pro to activate Pro (owner only)")
+    
+    await interaction.edit_original_response(embed=embed)
