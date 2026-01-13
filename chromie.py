@@ -128,11 +128,66 @@ def load_state():
                 with open(DATA_FILE, 'r') as f:
                     loaded = json.load(f)
                     state.update(loaded)
+                
+                # Migrate old event format to new format
+                migrated = False
+                for guild_id_str, guild_state in state.get("guilds", {}).items():
+                    for event in guild_state.get("events", []):
+                        # Convert old timestamp format to datetime_iso
+                        if "timestamp" in event and "datetime_iso" not in event:
+                            try:
+                                dt = datetime.fromtimestamp(event["timestamp"], tz=ZoneInfo("UTC"))
+                                # Convert to event's timezone if specified
+                                tz_str = event.get("timezone", str(DEFAULT_TZ))
+                                tz = ZoneInfo(tz_str)
+                                dt = dt.astimezone(tz)
+                                event["datetime_iso"] = dt.isoformat()
+                                migrated = True
+                            except Exception as e:
+                                log_error(f"Failed to migrate event {event.get('name', 'unknown')}: {e}")
+                        
+                        # Ensure all required fields exist
+                        if "id" not in event:
+                            event["id"] = str(uuid.uuid4())
+                            migrated = True
+                        
+                        if "milestone_fired" not in event:
+                            milestones = event.get("milestones", DEFAULT_MILESTONES.copy())
+                            event["milestone_fired"] = {str(m): False for m in milestones}
+                            migrated = True
+                        
+                        if "repeat" not in event:
+                            # Check for old repeat_every_days field
+                            if "repeat_every_days" in event and event["repeat_every_days"]:
+                                event["repeat"] = {
+                                    "type": "daily",
+                                    "interval": event["repeat_every_days"]
+                                }
+                            else:
+                                event["repeat"] = {"type": "none", "interval": 1}
+                            migrated = True
+                        
+                        if "banner_url" not in event:
+                            event["banner_url"] = ""
+                            migrated = True
+                        
+                        if "notify_role_id" not in event:
+                            event["notify_role_id"] = event.get("mention_role_id", 0)
+                            migrated = True
+                        
+                        if "notify_channel_id" not in event:
+                            event["notify_channel_id"] = 0
+                            migrated = True
+                
+                if migrated:
+                    log_info("Migrated old event format to new format")
+                    save_state()
+                
                 log_info(f"State loaded from {DATA_FILE}")
             else:
                 log_info("No existing state file, starting fresh")
         except Exception as e:
-            log_error(f"Failed to load state: {e}")
+            log_error(f"Failed to load state: {e}\n{traceback.format_exc()}")
 
 # ============================================================================
 # GATING FUNCTIONS
@@ -302,10 +357,18 @@ async def safe_defer(interaction: discord.Interaction, ephemeral: bool = False):
 async def safe_send(interaction: discord.Interaction, content: str = None, embed: discord.Embed = None, ephemeral: bool = False, view: discord.ui.View = None):
     """Safely send a response or followup."""
     try:
+        kwargs = {"ephemeral": ephemeral}
+        if content:
+            kwargs["content"] = content
+        if embed:
+            kwargs["embed"] = embed
+        if view is not None:
+            kwargs["view"] = view
+            
         if interaction.response.is_done():
-            await interaction.followup.send(content=content, embed=embed, ephemeral=ephemeral, view=view)
+            await interaction.followup.send(**kwargs)
         else:
-            await interaction.response.send_message(content=content, embed=embed, ephemeral=ephemeral, view=view)
+            await interaction.response.send_message(**kwargs)
     except Exception as e:
         log_error(f"Failed to send message: {e}")
 
@@ -375,9 +438,22 @@ def create_event(
     }
 
 def get_event_datetime(event: Dict[str, Any]) -> datetime:
-    """Parse event datetime with timezone."""
+    """Parse event datetime with timezone (handles both old and new formats)."""
+    # Handle old format (timestamp)
+    if "timestamp" in event and "datetime_iso" not in event:
+        dt = datetime.fromtimestamp(event["timestamp"], tz=ZoneInfo("UTC"))
+        # Convert to event's timezone if specified
+        if "timezone" in event:
+            try:
+                tz = ZoneInfo(event["timezone"])
+                dt = dt.astimezone(tz)
+            except:
+                pass
+        return dt
+    
+    # Handle new format (datetime_iso)
     dt = datetime.fromisoformat(event["datetime_iso"])
-    tz = ZoneInfo(event["timezone"])
+    tz = ZoneInfo(event.get("timezone", str(DEFAULT_TZ)))
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=tz)
     return dt
@@ -473,7 +549,7 @@ def build_pinned_embed(guild_state: Dict[str, Any], guild_name: str) -> discord.
             if event["banner_url"] and not embed.image:
                 embed.set_image(url=event["banner_url"])
     
-    embed.set_footer(text="Times update automatically • Use /chronohelp for commands")
+    embed.set_footer(text="Times update automatically • Use /help for commands")
     return embed
 
 async def update_pinned_message(bot: commands.Bot, guild_id: int, force: bool = False):
@@ -541,56 +617,69 @@ async def check_events(bot: commands.Bot):
         now = datetime.utcnow()
         
         for event in guild_state["events"][:]:
-            dt = get_event_datetime(event)
-            time_until = (dt - now.replace(tzinfo=dt.tzinfo)).total_seconds()
-            days_until = time_until / 86400
-            
-            # Check if event has started
-            if time_until <= 0 and not event["milestone_fired"].get("0", False):
-                needs_update = True
-                event["milestone_fired"]["0"] = True
+            try:
+                dt = get_event_datetime(event)
+                time_until = (dt - now.replace(tzinfo=dt.tzinfo)).total_seconds()
+                days_until = time_until / 86400
                 
-                # Send notification
-                notify_channel_id = event["notify_channel_id"] or guild_state["event_channel_id"]
-                if notify_channel_id:
-                    channel = guild.get_channel(notify_channel_id)
-                    if channel:
-                        role_mention = ""
-                        if event["notify_role_id"]:
-                            role = guild.get_role(event["notify_role_id"])
-                            if role:
-                                role_mention = f"{role.mention} "
-                        
-                        try:
-                            await channel.send(f"🎉 {role_mention}**{event['name']}** has started!")
-                        except Exception as e:
-                            log_error(f"Failed to send event start notification: {e}")
-                
-                # Handle repeating events
-                if event["repeat"]["type"] != "none":
-                    advance_repeating_event(event)
-                    log_info(f"Advanced repeating event {event['id']} in guild {guild_id}")
-            
-            # Check milestones
-            if guild_state["settings"]["show_milestones"]:
-                for milestone in event["milestones"]:
-                    milestone_key = str(milestone)
-                    if not event["milestone_fired"].get(milestone_key, False):
-                        if days_until <= milestone and days_until > 0:
-                            needs_update = True
-                            event["milestone_fired"][milestone_key] = True
+                # Check if event has started
+                if time_until <= 0 and not event.get("milestone_fired", {}).get("0", False):
+                    needs_update = True
+                    if "milestone_fired" not in event:
+                        event["milestone_fired"] = {}
+                    event["milestone_fired"]["0"] = True
+                    
+                    # Send notification
+                    notify_channel_id = event.get("notify_channel_id") or guild_state.get("event_channel_id")
+                    if notify_channel_id:
+                        channel = guild.get_channel(notify_channel_id)
+                        if channel:
+                            role_mention = ""
+                            notify_role_id = event.get("notify_role_id")
+                            if notify_role_id:
+                                role = guild.get_role(notify_role_id)
+                                if role:
+                                    role_mention = f"{role.mention} "
                             
-                            # Send milestone notification
-                            notify_channel_id = event["notify_channel_id"] or guild_state["event_channel_id"]
-                            if notify_channel_id:
-                                channel = guild.get_channel(notify_channel_id)
-                                if channel:
-                                    try:
-                                        await channel.send(
-                                            f"⏰ **{event['name']}** is {milestone} day{'s' if milestone != 1 else ''} away!"
-                                        )
-                                    except Exception as e:
-                                        log_error(f"Failed to send milestone notification: {e}")
+                            try:
+                                await channel.send(f"🎉 {role_mention}**{event.get('name', 'Event')}** has started!")
+                            except Exception as e:
+                                log_error(f"Failed to send event start notification: {e}")
+                    
+                    # Handle repeating events
+                    repeat_type = event.get("repeat", {}).get("type", "none")
+                    if repeat_type != "none":
+                        advance_repeating_event(event)
+                        log_info(f"Advanced repeating event {event.get('id', 'unknown')} in guild {guild_id}")
+                
+                # Check milestones
+                if guild_state.get("settings", {}).get("show_milestones", True):
+                    milestones = event.get("milestones", DEFAULT_MILESTONES.copy())
+                    if "milestone_fired" not in event:
+                        event["milestone_fired"] = {}
+                    
+                    for milestone in milestones:
+                        milestone_key = str(milestone)
+                        if not event["milestone_fired"].get(milestone_key, False):
+                            if days_until <= milestone and days_until > 0:
+                                needs_update = True
+                                event["milestone_fired"][milestone_key] = True
+                                
+                                # Send milestone notification
+                                notify_channel_id = event.get("notify_channel_id") or guild_state.get("event_channel_id")
+                                if notify_channel_id:
+                                    channel = guild.get_channel(notify_channel_id)
+                                    if channel:
+                                        try:
+                                            await channel.send(
+                                                f"⏰ **{event.get('name', 'Event')}** is {milestone} day{'s' if milestone != 1 else ''} away!"
+                                            )
+                                        except Exception as e:
+                                            log_error(f"Failed to send milestone notification: {e}")
+            
+            except Exception as e:
+                log_error(f"Error processing event {event.get('name', 'unknown')} in guild {guild_id}: {e}")
+                continue
         
         if needs_update:
             save_state()
