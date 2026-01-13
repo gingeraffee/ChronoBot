@@ -930,6 +930,9 @@ async def send_onboarding_for_guild(guild: discord.Guild):
         "Alright — I'll be over here, politely bullying time into behaving. 💜"
     )
 
+    # -----------------------------
+    # Message 2: Supporter features
+    # -----------------------------
     supporter_message = (
         "**⭐ Supporter Tier (Vote to unlock - Free!)**\n"
         "Chromie is free. Voting on Top.gg helps it grow — and unlocks bonus features for 12 hours.\n\n"
@@ -954,6 +957,34 @@ async def send_onboarding_for_guild(guild: discord.Guild):
         "If anything seems stuck after voting, run `/vote` again (Top.gg can take a moment to reflect your vote)."
     )
 
+    sent_dm = False
+
+    # Try DM first (preferred)
+    if contact_user:
+        try:
+            await contact_user.send(base_message)
+            await contact_user.send(supporter_message)
+            sent_dm = True
+        except discord.Forbidden:
+            sent_dm = False
+        except Exception:
+            sent_dm = False
+
+    # Fallback: post in a channel (base message only to avoid "promo spam" vibe)
+    if not sent_dm:
+        fallback_channel = guild.system_channel
+
+        if fallback_channel is None:
+            bot_m = await get_bot_member(guild)
+            for ch in guild.text_channels:
+                target = bot_m if bot_m is not None else guild.default_role
+                perms = ch.permissions_for(target)
+                if perms.view_channel and perms.send_messages:
+                    fallback_channel = ch
+                    break
+
+        if fallback_channel is not None:
+            try:
                 await fallback_channel.send(
                     base_message,
                     allowed_mentions=discord.AllowedMentions.none()
@@ -963,7 +994,6 @@ async def send_onboarding_for_guild(guild: discord.Guild):
 
     guild_state["welcomed"] = True
     save_state()
-
 
 
 async def notify_owner_countdown_unpinned(
