@@ -3973,8 +3973,8 @@ async def digest_disable_cmd(interaction: discord.Interaction):
 countdown_group = app_commands.Group(name="countdown", description="Customize the pinned countdown embed")
 bot.tree.add_command(countdown_group)
 
-@countdown_group.command(name="title", description="Set a custom title for the pinned countdown embed (Supporter perk).")
-@require_vote("/countdown title")
+@countdown_group.command(name="title", description="Set a custom title for the pinned countdown embed (Pro only).")
+@require_pro("/countdown title")
 @app_commands.checks.has_permissions(manage_guild=True)
 @app_commands.guild_only()
 @app_commands.describe(text="New title (max 256 characters). Use 'default' to clear.")
@@ -4000,7 +4000,7 @@ async def countdown_title_cmd(interaction: discord.Interaction, text: str):
 
 
 @countdown_group.command(name="cleartitle", description="Clear the custom countdown title (back to theme default).")
-@require_vote("/countdown cleartitle")
+@require_pro("/countdown cleartitle")
 @app_commands.checks.has_permissions(manage_guild=True)
 @app_commands.guild_only()
 async def countdown_cleartitle_cmd(interaction: discord.Interaction):
@@ -4016,8 +4016,8 @@ async def countdown_cleartitle_cmd(interaction: discord.Interaction):
     await interaction.edit_original_response(content="✅ Countdown title cleared (using theme default).")
 
 
-@countdown_group.command(name="description", description="Set a custom intro/description shown above the event list (Supporter perk).")
-@require_vote("/countdown description")
+@countdown_group.command(name="description", description="Set a custom intro/description shown above the event list (Pro only).")
+@require_pro("/countdown description")
 @app_commands.checks.has_permissions(manage_guild=True)
 @app_commands.guild_only()
 @app_commands.describe(text="Intro text shown above the list (max 1024 recommended). Use 'clear' to remove.")
@@ -4046,7 +4046,7 @@ async def countdown_description_cmd(interaction: discord.Interaction, text: str)
 
 
 @countdown_group.command(name="cleardescription", description="Clear the custom countdown description.")
-@require_vote("/countdown cleardescription")
+@require_pro("/countdown cleardescription")
 @app_commands.checks.has_permissions(manage_guild=True)
 @app_commands.guild_only()
 async def countdown_cleardescription_cmd(interaction: discord.Interaction):
@@ -5746,6 +5746,35 @@ async def clear_reminder_time(interaction: discord.Interaction, event_index: int
         await interaction.edit_original_response(embed=embed)
 
 
+@bot.tree.command(name="pro_status", description="Check if your server has Pro")
+@app_commands.guild_only()
+async def pro_status(interaction: discord.Interaction):
+    """Check Pro subscription status"""
+    await interaction.response.defer(ephemeral=True)
+    
+    guild_state = get_guild_state(interaction.guild_id)
+    pro_active = is_pro(guild_state)
+    
+    if pro_active:
+        embed = discord.Embed(
+            title="✅ PRO ACTIVE",
+            description="Your server has Chromie Pro!",
+            color=discord.Color.green()
+        )
+    else:
+        embed = discord.Embed(
+            title="❌ NOT PRO",
+            description="Your server does not have Chromie Pro.",
+            color=discord.Color.red()
+        )
+    
+    pro_data = guild_state.get("pro", {})
+    pro_until = pro_data.get("pro_until", "Not set")
+    
+    embed.add_field(name="Pro Until", value=str(pro_until), inline=False)
+    
+    await interaction.edit_original_response(embed=embed)
+
 
 # ==========================
 # RUN
@@ -5822,33 +5851,3 @@ async def owner_unlock_command(
         pass
     
     await interaction.response.send_message(msg, ephemeral=True)
-
-
-@bot.tree.command(name="pro_status", description="Check if your server has Pro")
-@app_commands.guild_only()
-async def pro_status(interaction: discord.Interaction):
-    """Check Pro subscription status"""
-    await interaction.response.defer(ephemeral=True)
-    
-    guild_state = get_guild_state(interaction.guild_id)
-    pro_active = is_pro(guild_state)
-    
-    if pro_active:
-        embed = discord.Embed(
-            title="✅ PRO ACTIVE",
-            description="Your server has Chromie Pro!",
-            color=discord.Color.green()
-        )
-    else:
-        embed = discord.Embed(
-            title="❌ NOT PRO",
-            description="Your server does not have Chromie Pro.",
-            color=discord.Color.red()
-        )
-    
-    pro_data = guild_state.get("pro", {})
-    pro_until = pro_data.get("pro_until", "Not set")
-    
-    embed.add_field(name="Pro Until", value=str(pro_until), inline=False)
-    
-    await interaction.edit_original_response(embed=embed)
