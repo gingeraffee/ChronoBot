@@ -1000,17 +1000,13 @@ async def send_onboarding_for_guild(guild: discord.Guild):
     # Message 1: Base features
     # -----------------------------
     base_message = (
-        f"Hey {mention}! Thanks for inviting **ChronoBot** to **{guild.name}** 🕒✨\n\n"
+        f"Hey {mention}! Thanks for inviting **ChronoBot** to **{guild.name}** 🕒✨\n"
         "I'm **Chromie** — your server's confident little timekeeper. I pin a clean countdown list and post reminders "
         "so nobody has to do the mental math (or the panic).\n\n"
         "**⚡ Quick start (30 seconds):**\n"
         "1) In your events channel: `/seteventchannel`\n"
-        "2) Add an event: `/addevent date: 04/12/2026 time: 09:00 name: Game Night 🎲`\n\n"
-        "**🎯 Your tier: Free (3 events max)**\n"
-        "• 🆓 **Free:** 3 events, all core features\n"
-        "• ⭐ **Supporter:** 5 events, themes, banners (vote on Top.gg - free!)\n"
-        "• 💎 **Pro:** Unlimited events, recurring reminders, templates, digest ($2.99/mo)\n"
-        "Run `/vote` to unlock Supporter, or subscribe for Pro via Discord!\n\n"
+        "2) Set your timezone: `/timezone_set`\n"
+        "3) Add an event: `/addevent date: 04/12/2026 time: 09:00 name: Game Night 🎲`\n\n"
         "**🧭 Core commands:**\n"
         "• `/listevents` (shows event numbers)\n"
         "• `/eventinfo index:` (details)\n"
@@ -1020,20 +1016,26 @@ async def send_onboarding_for_guild(guild: discord.Guild):
         "**🔔 Reminders & mentions:**\n"
         f"Milestone reminders post in your event channel ({milestone_str} by default). "
         "Timezone is **America/Chicago**.\n"
-        "Want role pings? Use `/setmentionrole` (clear with `/clearmentionrole`).\n\n"
+        "Want role pings? Use `/setmentionrole` (clear with `/clearmentionrole`).\n"
+        "Want to assign an event? Use `/seteventowner` (clear with `/cleareventowner`).\n\n"
         "**🛠️ Troubleshooting:**\n"
         "Run `/healthcheck` — it shows your configured channel + whether I can view/send/embed/read history/pin.\n"
         "(Past events auto-remove after they pass so the list stays tidy.)\n\n"
-        "**More help:** `/chronohelp` (check out Tiers & Pricing!)\n"
+        "**More help:** `/chronohelp` (check out Tiers & Pricing!)\n\n"
         f"FAQ: {FAQ_URL}\n"
         f"Support server: {SUPPORT_SERVER_URL}\n\n"
         "Alright — I'll be over here, politely bullying time into behaving. 💜"
     )
 
     # -----------------------------
-    # Message 2: Supporter features
+    # Message 2: Tiers & Supporter features
     # -----------------------------
     supporter_message = (
+        "**🎯 Your tier: Free (3 events max)**\n"
+        "• 🆓 **Free:** 3 events, all core features\n"
+        "• ⭐ **Supporter:** 5 events, themes, banners (vote on Top.gg - free!)\n"
+        "• 💎 **Pro:** Unlimited events, recurring reminders, templates, digest ($2.99/mo)\n"
+        "Run `/vote` to unlock Supporter, or subscribe for Pro via our Store!\n\n"
         "**⭐ Supporter Tier (Vote to unlock - Free!)**\n"
         "Chromie is free. Voting on Top.gg helps it grow — and unlocks bonus features for 12 hours.\n\n"
         "**What you get:**\n"
@@ -1042,7 +1044,7 @@ async def send_onboarding_for_guild(guild: discord.Guild):
         "• `/banner set` — custom event banner images\n"
         "• `/milestones advanced` — server-wide milestone schedules\n\n"
         "**How to unlock:**\n"
-        "Run `/vote` to get the link. Vote takes 10 seconds. Supporter unlocks for 12 hours!\n\n"
+        "Run `/vote` to get the link. Voting takes 10 seconds and helps Chromie grow!\n\n"
         "**💎 Chromie Pro ($2.99/month)**\n"
         "For power users who need unlimited events + advanced automation:\n"
         "• ♾️ Unlimited events (no cap)\n"
@@ -1053,7 +1055,7 @@ async def send_onboarding_for_guild(guild: discord.Guild):
         "• 🎨 All Supporter features (permanent)\n"
         "• 📌 Multiple countdown boards\n"
         "• 🏆 Priority support\n\n"
-        "Subscribe via Discord Server Subscription. Pro unlocks for the entire server!\n\n"
+        "Subscribe via my Discord Store. Pro unlocks for your entire server!\n\n"
         "If anything seems stuck after voting, run `/vote` again (Top.gg can take a moment to reflect your vote)."
     )
 
@@ -2870,6 +2872,8 @@ def build_embed_for_guild(guild_state: dict) -> discord.Embed:
             f"**Countdown:** <t:{unix_ts}:R>",  # Relative time (auto-updates!)
         ]
 
+        # Only show owner if explicitly set via /seteventowner
+        # Don't show creator (they're just the one who added the event)
         owner_id = ev.get("owner_user_id")
         owner_name = ev.get("owner_name")
 
@@ -2877,9 +2881,11 @@ def build_embed_for_guild(guild_state: dict) -> discord.Embed:
         if isinstance(owner_id, str) and owner_id.isdigit():
             owner_id = int(owner_id)
 
+        # Only display if owner was explicitly set (has a valid owner_id or owner_name)
         if isinstance(owner_id, int) and owner_id > 0:
             lines.append(f"👤 Hosted by <@{owner_id}>")
-        elif isinstance(owner_name, str) and owner_name.strip():
+        elif isinstance(owner_name, str) and owner_name.strip() and owner_id:
+            # Only show name if there's also an ID (to ensure it was set via /seteventowner)
             lines.append(f"👤 Hosted by {owner_name.strip()}")
 
         blocks.append("\n".join(lines))
