@@ -5824,84 +5824,31 @@ async def owner_unlock_command(
     await interaction.response.send_message(msg, ephemeral=True)
 
 
-@bot.tree.command(name="checkpro", description="[Admin] Check your server's Pro status")
-@app_commands.checks.has_permissions(administrator=True)
+@bot.tree.command(name="pro_status", description="Check if your server has Pro")
 @app_commands.guild_only()
-async def checkpro(interaction: discord.Interaction):
-    """Check Pro subscription status for debugging"""
+async def pro_status(interaction: discord.Interaction):
+    """Check Pro subscription status"""
     await interaction.response.defer(ephemeral=True)
     
     guild_state = get_guild_state(interaction.guild_id)
+    pro_active = is_pro(guild_state)
+    
+    if pro_active:
+        embed = discord.Embed(
+            title="✅ PRO ACTIVE",
+            description="Your server has Chromie Pro!",
+            color=discord.Color.green()
+        )
+    else:
+        embed = discord.Embed(
+            title="❌ NOT PRO",
+            description="Your server does not have Chromie Pro.",
+            color=discord.Color.red()
+        )
+    
     pro_data = guild_state.get("pro", {})
+    pro_until = pro_data.get("pro_until", "Not set")
     
-    # Detailed status
-    pro_active = pro_data.get("pro_active", False)
-    pro_until_str = pro_data.get("pro_until")
-    grace_until_str = pro_data.get("grace_until")
-    migration_mode = pro_data.get("migration_mode", False)
-    
-    # Check if actually pro
-    is_pro_now = is_pro(guild_state)
-    
-    embed = discord.Embed(
-        title="🔍 Pro Status Check",
-        color=discord.Color.green() if is_pro_now else discord.Color.red()
-    )
-    
-    embed.add_field(
-        name="Overall Status",
-        value=f"{'✅ **PRO ACTIVE**' if is_pro_now else '❌ **NOT PRO**'}",
-        inline=False
-    )
-    
-    embed.add_field(
-        name="Pro Active Flag",
-        value=f"`{pro_active}`",
-        inline=True
-    )
-    
-    embed.add_field(
-        name="Pro Until",
-        value=pro_until_str or "Not set",
-        inline=True
-    )
-    
-    if pro_until_str:
-        try:
-            pro_until = datetime.fromisoformat(pro_until_str)
-            now = datetime.utcnow()
-            remaining = pro_until - now
-            if remaining.total_seconds() > 0:
-                embed.add_field(
-                    name="Time Remaining",
-                    value=f"{int(remaining.total_seconds() // 3600)} hours",
-                    inline=True
-                )
-            else:
-                embed.add_field(
-                    name="Status",
-                    value="⏰ Expired",
-                    inline=True
-                )
-        except Exception as e:
-            embed.add_field(
-                name="Error",
-                value=f"Could not parse date: {e}",
-                inline=True
-            )
-    
-    embed.add_field(
-        name="Grace Until",
-        value=grace_until_str or "Not set",
-        inline=True
-    )
-    
-    embed.add_field(
-        name="Migration Mode",
-        value=f"`{migration_mode}`",
-        inline=True
-    )
-    
-    embed.set_footer(text="Use /owner_unlock pro to activate Pro (owner only)")
+    embed.add_field(name="Pro Until", value=str(pro_until), inline=False)
     
     await interaction.edit_original_response(embed=embed)
