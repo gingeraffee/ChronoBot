@@ -761,30 +761,42 @@ async def check_discord_entitlements(guild_id: int) -> bool:
     Uses Discord's entitlements API to check for active subscriptions.
     """
     try:
-        # Get the SKU ID for Chromie Pro from environment or use a default
-        # The SKU ID would be provided by Discord when you set up subscriptions
-        SKU_ID = int(os.getenv("CHROMIE_PRO_SKU_ID", "0"))
+        # Get the SKU ID for Chromie Pro from environment
+        SKU_ID = os.getenv("CHROMIE_PRO_SKU_ID", "").strip()
         
         if not SKU_ID:
-            # SKU not configured, fall back to stored Pro status
+            print("[ENTITLEMENTS] SKU ID not configured")
             return False
         
-        # Fetch entitlements for the guild
+        # Fetch entitlements for the guild using the REST API
         # This checks if the guild has an active subscription
-        entitlements = await bot.http.get_entitlements(
-            guild_id=guild_id,
-            sku_ids=[SKU_ID],
-            exclude_expired=True  # Only get active subscriptions
-        )
-        
-        # If there are any entitlements, the guild has Pro
-        if entitlements:
-            return True
-        
-        return False
+        try:
+            # Use the bot's HTTP client to get entitlements
+            # exclude_ended=True means only get active subscriptions
+            entitlements = await bot.http.get_entitlements(
+                guild_id=guild_id,
+                sku_ids=[int(SKU_ID)],
+                exclude_ended=True  # Only get active subscriptions
+            )
+            
+            print(f"[ENTITLEMENTS] Entitlements response for guild {guild_id}: {entitlements}")
+            
+            # If there are any entitlements, the guild has Pro
+            if entitlements and len(entitlements) > 0:
+                print(f"[ENTITLEMENTS] Found {len(entitlements)} active entitlements for guild {guild_id}")
+                return True
+            
+            print(f"[ENTITLEMENTS] No active entitlements found for guild {guild_id}")
+            return False
+        except Exception as inner_e:
+            print(f"[ENTITLEMENTS] get_entitlements failed: {inner_e}")
+            import traceback
+            traceback.print_exc()
+            return False
     except Exception as e:
         print(f"[ENTITLEMENTS] Error checking entitlements for guild {guild_id}: {e}")
-        # If entitlements check fails, fall back to stored Pro status
+        import traceback
+        traceback.print_exc()
         return False
 
 
