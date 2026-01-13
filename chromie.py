@@ -1913,6 +1913,25 @@ for theme_id, pool in FOOTER_POOLS.items():
     if theme_id in THEMES:
         THEMES[theme_id]["footer_pool"] = pool
 
+_THEME_LABELS: Dict[str, str] = {
+    "classic": "Chrono Purple (default) 💜",
+    "football": "Football 🏈",
+    "basketball": "Basketball 🏀",
+    "baseball": "Baseball ⚾",
+    "raidnight": "Raid Night 🎮",
+    "dnd": "D&D 🐉",
+    "girly": "Cute Aesthetic 🎀",
+    "workplace": "Workplace Ops 📌",
+    "celebration": "Celebration 🎉",
+    "romance": "Romance 💞",
+    "vacation": "Vacation 🧳",
+    "hype": "Hype Mode 🚀",
+    "minimal": "Minimalist ▫️",
+    "school": "School 📚",
+    "spooky": "Spooky 🎃",
+}
+
+
 
 for theme_id, pool in FOOTER_POOLS.items():
     if theme_id in THEMES:
