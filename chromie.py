@@ -2,7 +2,7 @@ import os
 import json
 import traceback
 from pathlib import Path
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from zoneinfo import ZoneInfo
 from typing import Optional, List, Tuple, Dict, Any, Set
 import time
@@ -190,7 +190,10 @@ def has_active_vote_guild(guild_state: Dict[str, Any]) -> bool:
     if vote_until_str:
         try:
             vote_until = datetime.fromisoformat(vote_until_str)
-            if datetime.utcnow() < vote_until:
+            now = datetime.now(timezone.utc)
+            if vote_until.tzinfo is None:
+                now = now.replace(tzinfo=None)
+            if now < vote_until:
                 return True
         except:
             pass
@@ -217,7 +220,7 @@ def is_pro(guild_state: Dict[str, Any]) -> bool:
             try:
                 # Handle both timezone-aware and naive datetimes
                 pro_until = datetime.fromisoformat(pro_until_str)
-                now = datetime.utcnow()
+                now = datetime.now(timezone.utc)
                 
                 # If pro_until is timezone-aware, make now timezone-aware too
                 if pro_until.tzinfo is not None and now.tzinfo is None:
@@ -236,7 +239,7 @@ def is_pro(guild_state: Dict[str, Any]) -> bool:
     if grace_until_str:
         try:
             grace_until = datetime.fromisoformat(grace_until_str)
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             
             # Handle timezone-aware dates
             if grace_until.tzinfo is not None and now.tzinfo is None:
@@ -864,7 +867,7 @@ async def sync_discord_subscription(guild_id: int) -> bool:
     if has_subscription:
         # Guild has active subscription - update the state
         guild_state = get_guild_state(guild_id)
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         
         # Set Pro as active for a year (subscriptions auto-renew)
         if "pro" not in guild_state:
@@ -2505,7 +2508,7 @@ async def get_or_create_pinned_message(
     # -------------------------
     if not pinned_id and perms.read_message_history:
         try:
-            pins = await channel.pins()
+            pins = [message async for message in channel.pins()]
             bot_pins = [m for m in pins if m.author and m.author.id == bot_member.id]
             if bot_pins:
                 m = max(bot_pins, key=lambda x: x.created_at)
@@ -2540,8 +2543,7 @@ async def get_or_create_pinned_message(
         # Cleanup old bot pins only if we can read history AND manage pins
         if perms.manage_messages and perms.read_message_history:
             try:
-                pins = await channel.pins()
-                for m in pins:
+                async for m in channel.pins():
                     if m.id != msg.id and m.author and m.author.id == bot_member.id:
                         try:
                             await m.unpin(reason="Cleaning up older ChronoBot pins")
@@ -3591,7 +3593,7 @@ async def addevent(interaction: discord.Interaction, date: str, time: str, name:
     
     if has_voted:
         # Update guild supporter status if they voted
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         vote_until = now + timedelta(hours=12)
         if "supporter" not in guild_state:
             guild_state["supporter"] = {}
@@ -5319,7 +5321,7 @@ async def owner_unlock_command(
             return
     
     guild_state = get_guild_state(interaction.guild_id)
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     until = now + timedelta(hours=duration_hours)
     
     if feature.lower() == "supporter":
