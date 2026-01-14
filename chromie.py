@@ -1374,6 +1374,23 @@ async def ensure_countdown_pinned(
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user} (ID: {bot.user.id}) [{VERSION}]")
+    
+    # Post server count to Top.gg
+    if TOPGG_TOKEN and TOPGG_BOT_ID:
+        try:
+            server_count = len(bot.guilds)
+            url = f"{TOPGG_API_BASE}/bots/{TOPGG_BOT_ID}/stats"
+            headers = {"Authorization": TOPGG_TOKEN.strip()}
+            payload = {"server_count": server_count}
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=payload, headers=headers) as resp:
+                    if resp.status == 200:
+                        print(f"✅ Posted {server_count} servers to Top.gg")
+                    else:
+                        print(f"⚠️ Top.gg stats post failed: {resp.status}")
+        except Exception as e:
+            print(f"⚠️ Error posting to Top.gg: {e}")
 
 
 @bot.event
@@ -1382,6 +1399,40 @@ async def on_guild_join(guild: discord.Guild):
     sort_events(g_state)
     save_state()
     await send_onboarding_for_guild(guild)
+    
+    # Post updated server count to Top.gg
+    if TOPGG_TOKEN and TOPGG_BOT_ID:
+        try:
+            server_count = len(bot.guilds)
+            url = f"{TOPGG_API_BASE}/bots/{TOPGG_BOT_ID}/stats"
+            headers = {"Authorization": TOPGG_TOKEN.strip()}
+            payload = {"server_count": server_count}
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=payload, headers=headers) as resp:
+                    if resp.status == 200:
+                        print(f"✅ Updated Top.gg: now in {server_count} servers")
+        except Exception as e:
+            print(f"⚠️ Error updating Top.gg on guild join: {e}")
+
+
+@bot.event
+async def on_guild_remove(guild: discord.Guild):
+    """Called when the bot leaves a guild (kicked, left, or guild deleted)"""
+    # Post updated server count to Top.gg
+    if TOPGG_TOKEN and TOPGG_BOT_ID:
+        try:
+            server_count = len(bot.guilds)
+            url = f"{TOPGG_API_BASE}/bots/{TOPGG_BOT_ID}/stats"
+            headers = {"Authorization": TOPGG_TOKEN.strip()}
+            payload = {"server_count": server_count}
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=payload, headers=headers) as resp:
+                    if resp.status == 200:
+                        print(f"✅ Updated Top.gg: now in {server_count} servers")
+        except Exception as e:
+            print(f"⚠️ Error updating Top.gg on guild remove: {e}")
 
 
 # ==========================
