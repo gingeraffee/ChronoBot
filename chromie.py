@@ -3720,6 +3720,10 @@ async def eventinfo(interaction: discord.Interaction, index: int):
     creator_name = ev.get("created_by_name") or ev.get("owner_name") or "unknown"
     creator_id = ev.get("created_by_user_id") or ev.get("owner_user_id")
     creator_note = f"{creator_name}" + (f" (ID: {creator_id})" if creator_id else "")
+    
+    # Show custom reminder time if set
+    reminder_time = ev.get("reminder_time")
+    reminder_note = reminder_time if reminder_time else "event time"
 
     await interaction.response.send_message(
         f"**Event #{index}: {ev['name']}**\n"
@@ -3728,6 +3732,7 @@ async def eventinfo(interaction: discord.Interaction, index: int):
         f"📝 Created by: {creator_note}\n"
         f"👤 Owner (DM): {owner_note}\n"
         f"🔔 Milestones: {miles}\n"
+        f"🕐 Reminder Time: {reminder_note}\n"
         f"🔁 Repeat: {repeat_note}\n"
         f"🔕 Silenced: {'yes' if silenced and not passed else 'no'}",
         ephemeral=True,
