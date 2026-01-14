@@ -491,6 +491,52 @@ def set_event_reminder_time(guild_id: int, event_index: int, reminder_time: Opti
         return True
     return False
 
+
+def should_send_reminder_based_on_time(ev: dict, now: datetime) -> bool:
+    """
+    Determine if a reminder should be sent based on custom reminder_time.
+    
+    If a custom reminder_time is set for the event, only return True if current time
+    has reached or passed that time on the event day. Otherwise, always return True
+    (meaning send the reminder based on the event's actual time).
+    
+    Args:
+        ev: The event dictionary
+        now: Current datetime with timezone info
+    
+    Returns:
+        True if reminder should be sent, False otherwise
+    """
+    reminder_time_str = ev.get("reminder_time")
+    
+    # If no custom reminder time is set, always send
+    if not reminder_time_str:
+        return True
+    
+    # Parse the custom reminder time (format: HH:MM)
+    try:
+        parts = reminder_time_str.split(":")
+        if len(parts) != 2:
+            return True  # Invalid format, fall back to sending
+        
+        reminder_hour = int(parts[0])
+        reminder_minute = int(parts[1])
+        
+        # Validate the parsed values
+        if not (0 <= reminder_hour < 24 and 0 <= reminder_minute < 60):
+            return True  # Invalid time values, fall back to sending
+        
+        # Get the current time on the same day in the event's timezone
+        now_time = now.time()
+        reminder_time = datetime.min.replace(hour=reminder_hour, minute=reminder_minute).time()
+        
+        # Send if current time >= reminder time
+        return now_time >= reminder_time
+    
+    except (ValueError, AttributeError):
+        # If parsing fails, fall back to sending the reminder
+        return True
+
 # ==========================
 # STATE INIT (must exist globally)
 # ==========================
@@ -2901,7 +2947,7 @@ async def update_countdowns():
                     ev["announced_milestones"] = announced
                     mark_dirty()  # you changed the event dict
 
-                if days_left in milestones and days_left not in announced:
+                if days_left in milestones and days_left not in announced and should_send_reminder_based_on_time(ev, now):
                     mention_prefix, allowed_mentions = build_milestone_mention(channel, guild_state)
 
                     event_name = ev.get("name", "Event")
@@ -2973,7 +3019,7 @@ async def update_countdowns():
                             ev["announced_repeat_dates"] = sent_dates
                             mark_dirty()
 
-                        if today.isoformat() not in sent_dates and not milestone_sent_today:
+                        if today.isoformat() not in sent_dates and not milestone_sent_today and should_send_reminder_based_on_time(ev, now):
                             try:
                                 date_str = dt.strftime("%B %d, %Y")
                                 text = build_repeat_message(
