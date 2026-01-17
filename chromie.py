@@ -48,6 +48,7 @@ _STATE_LOCK = Lock()
 TOPGG_TOKEN = os.getenv("TOPGG_TOKEN", "").strip()
 TOPGG_BOT_ID = os.getenv("TOPGG_BOT_ID", "").strip()
 TOPGG_FAIL_OPEN = False 
+_topgg_mismatch_warned = False
     
 def log_throttled(guild_id: int, code: str, msg: str):
     key = (guild_id, code)
@@ -91,9 +92,27 @@ async def maybe_vote_nudge(interaction: discord.Interaction, reason: str) -> Non
     else:
         await interaction.response.send_message(msg, ephemeral=True, view=build_vote_view())
 
+def get_topgg_bot_id() -> str:
+    bot_user = getattr(bot, "user", None)
+    if bot_user and bot_user.id:
+        runtime_id = str(bot_user.id)
+        if TOPGG_BOT_ID and TOPGG_BOT_ID != runtime_id:
+            global _topgg_mismatch_warned
+            if not _topgg_mismatch_warned:
+                _topgg_mismatch_warned = True
+                print(
+                    "⚠️ TOPGG_BOT_ID does not match the running bot user ID. "
+                    f"Using runtime ID {runtime_id}."
+                )
+        return runtime_id
+
+    return TOPGG_BOT_ID
+
+
 def build_vote_view() -> discord.ui.View:
     view = discord.ui.View()
-    url = f"https://top.gg/bot/{TOPGG_BOT_ID}/vote" if TOPGG_BOT_ID else "https://top.gg"
+    bot_id = get_topgg_bot_id()
+    url = f"https://top.gg/bot/{bot_id}/vote" if bot_id else "https://top.gg"
     view.add_item(discord.ui.Button(label="Vote on Top.gg", style=discord.ButtonStyle.link, url=url))
     return view
         
@@ -109,12 +128,13 @@ async def topgg_has_voted(user_id: int, *, force: bool = False) -> bool:
         return cached[1]
 
     # Need BOTH token + bot id for the documented check endpoint
-    if not TOPGG_TOKEN or not TOPGG_BOT_ID:
+    bot_id = get_topgg_bot_id()
+    if not TOPGG_TOKEN or not bot_id:
         voted = True if TOPGG_FAIL_OPEN else False
         _vote_cache[user_id] = (now, voted)
         return voted
 
-    url = f"{TOPGG_API_BASE}/bots/{TOPGG_BOT_ID}/check"
+    url = f"{TOPGG_API_BASE}/bots/{bot_id}/check"
     headers = {"Authorization": TOPGG_TOKEN.strip()}  # v0 docs: no Bearer :contentReference[oaicite:2]{index=2}
     params = {"userId": str(user_id)}
     timeout = aiohttp.ClientTimeout(total=6)
@@ -1379,10 +1399,11 @@ async def on_ready():
     print(f"Logged in as {bot.user} (ID: {bot.user.id}) [{VERSION}]")
     
     # Post server count to Top.gg
-    if TOPGG_TOKEN and TOPGG_BOT_ID:
+    bot_id = get_topgg_bot_id()
+    if TOPGG_TOKEN and bot_id:
         try:
             server_count = len(bot.guilds)
-            url = f"{TOPGG_API_BASE}/bots/{TOPGG_BOT_ID}/stats"
+            url = f"{TOPGG_API_BASE}/bots/{bot_id}/stats"
             headers = {"Authorization": TOPGG_TOKEN.strip()}
             payload = {"server_count": server_count}
             
@@ -1404,10 +1425,11 @@ async def on_guild_join(guild: discord.Guild):
     await send_onboarding_for_guild(guild)
     
     # Post updated server count to Top.gg
-    if TOPGG_TOKEN and TOPGG_BOT_ID:
+    bot_id = get_topgg_bot_id()
+    if TOPGG_TOKEN and bot_id:
         try:
             server_count = len(bot.guilds)
-            url = f"{TOPGG_API_BASE}/bots/{TOPGG_BOT_ID}/stats"
+            url = f"{TOPGG_API_BASE}/bots/{bot_id}/stats"
             headers = {"Authorization": TOPGG_TOKEN.strip()}
             payload = {"server_count": server_count}
             
@@ -1423,10 +1445,11 @@ async def on_guild_join(guild: discord.Guild):
 async def on_guild_remove(guild: discord.Guild):
     """Called when the bot leaves a guild (kicked, left, or guild deleted)"""
     # Post updated server count to Top.gg
-    if TOPGG_TOKEN and TOPGG_BOT_ID:
+    bot_id = get_topgg_bot_id()
+    if TOPGG_TOKEN and bot_id:
         try:
             server_count = len(bot.guilds)
-            url = f"{TOPGG_API_BASE}/bots/{TOPGG_BOT_ID}/stats"
+            url = f"{TOPGG_API_BASE}/bots/{bot_id}/stats"
             headers = {"Authorization": TOPGG_TOKEN.strip()}
             payload = {"server_count": server_count}
             
