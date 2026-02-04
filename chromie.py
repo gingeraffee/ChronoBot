@@ -515,13 +515,13 @@ def set_event_reminder_time(guild_id: int, event_index: int, reminder_time: Opti
     return False
 
 
-def should_send_reminder_based_on_time(ev: dict, now: datetime) -> bool:
+def should_send_reminder_based_on_time(ev: dict, now: datetime, event_dt: datetime) -> bool:
     """
     Determine if a reminder should be sent based on custom reminder_time.
     
     If a custom reminder_time is set for the event, only return True if current time
-    has reached or passed that time on the event day. Otherwise, always return True
-    (meaning send the reminder based on the event's actual time).
+    has reached or passed that time on the event day. Otherwise, use the event's
+    scheduled time-of-day (so reminders don't fire at midnight).
     
     Args:
         ev: The event dictionary
@@ -531,10 +531,6 @@ def should_send_reminder_based_on_time(ev: dict, now: datetime) -> bool:
         True if reminder should be sent, False otherwise
     """
     reminder_time_str = ev.get("reminder_time")
-    
-    # If no custom reminder time is set, always send
-    if not reminder_time_str:
-        return True
     
     # Parse the custom reminder time (format: HH:MM)
     try:
@@ -549,16 +545,23 @@ def should_send_reminder_based_on_time(ev: dict, now: datetime) -> bool:
         if not (0 <= reminder_hour < 24 and 0 <= reminder_minute < 60):
             return True  # Invalid time values, fall back to sending
         
-        # Get the current time on the same day in the event's timezone
-        now_time = now.time()
         reminder_time = datetime.min.replace(hour=reminder_hour, minute=reminder_minute).time()
-        
-        # Send if current time >= reminder time
-        return now_time >= reminder_time
-    
     except (ValueError, AttributeError):
-        # If parsing fails, fall back to sending the reminder
-        return True
+        reminder_time = None
+
+    if reminder_time is None:
+        reminder_time = event_dt.timetz().replace(tzinfo=None)
+
+    now_time = now.timetz().replace(tzinfo=None)
+    return now_time >= reminder_time
+
+
+def get_guild_timezone(guild_state: dict) -> ZoneInfo:
+    tz_name = (guild_state.get("timezone") or "UTC").strip()
+    try:
+        return ZoneInfo(tz_name)
+    except Exception:
+        return DEFAULT_TZ
 
 # ==========================
 # STATE INIT (must exist globally)
@@ -660,8 +663,9 @@ def _today_local_date() -> date:
     return datetime.now(DEFAULT_TZ).date()
 
 
-def calendar_days_left(dt: datetime) -> int:
-    now = datetime.now(DEFAULT_TZ)
+def calendar_days_left(dt: datetime, now: Optional[datetime] = None) -> int:
+    if now is None:
+        now = datetime.now(dt.tzinfo or DEFAULT_TZ)
     return (dt.date() - now.date()).days
 
 
@@ -2884,8 +2888,9 @@ async def update_countdowns():
                     state_changed = False
 
             # ---- EVENT CHECKS (start blast + milestones + repeats) ----
-            today = _today_local_date()
-            now = datetime.now(DEFAULT_TZ)
+            tz = get_guild_timezone(guild_state)
+            today = datetime.now(tz).date()
+            now = datetime.now(tz)
             now_dt = now
             for ev in list(guild_state.get("events", [])):
                 if ev.get("silenced", False):
@@ -2896,7 +2901,7 @@ async def update_countdowns():
                     continue
 
                 try:
-                    dt = datetime.fromtimestamp(ts, tz=DEFAULT_TZ)
+                    dt = datetime.fromtimestamp(ts, tz=tz)
                 except Exception:
                     continue
                 # ----------------------------
@@ -3010,7 +3015,7 @@ async def update_countdowns():
                 if passed:
                     continue
 
-                days_left = calendar_days_left(dt)
+                days_left = calendar_days_left(dt, now=now)
                 if days_left < 0:
                     continue
 
@@ -3023,7 +3028,7 @@ async def update_countdowns():
                     ev["announced_milestones"] = announced
                     mark_dirty()  # you changed the event dict
 
-                if days_left in milestones and days_left not in announced and should_send_reminder_based_on_time(ev, now):
+                if days_left in milestones and days_left not in announced and should_send_reminder_based_on_time(ev, now, dt):
                     mention_prefix, allowed_mentions = build_milestone_mention(channel, guild_state)
 
                     event_name = ev.get("name", "Event")
@@ -3095,7 +3100,7 @@ async def update_countdowns():
                             ev["announced_repeat_dates"] = sent_dates
                             mark_dirty()
 
-                        if today.isoformat() not in sent_dates and not milestone_sent_today and should_send_reminder_based_on_time(ev, now):
+                        if today.isoformat() not in sent_dates and not milestone_sent_today and should_send_reminder_based_on_time(ev, now, dt):
                             try:
                                 date_str = dt.strftime("%B %d, %Y")
                                 text = build_repeat_message(
