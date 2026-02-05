@@ -2905,63 +2905,83 @@ async def update_countdowns():
                 except Exception:
                     continue
                 # ----------------------------
-                # ✅ Reminder tracking defaults + post-event cleanup (24h)
+                # ✅ Reminder tracking defaults + auto-delete 24h after sending
                 # ----------------------------
-                ev.setdefault("reminder_messages", [])      # [{channel_id, message_id}, ...]
-                ev.setdefault("reminders_cleaned", False)  # guard
+                ev.setdefault("reminder_messages", [])      # [{channel_id, message_id, sent_at}, ...]
 
                 # Harden types (older saved states)
                 if not isinstance(ev.get("reminder_messages"), list):
                     ev["reminder_messages"] = []
                     mark_dirty()
 
-                # If event passed AND it's been 24h, delete all stored reminder messages
-                if (not ev.get("reminders_cleaned", False)) and (now_dt >= (dt + timedelta(seconds=MILESTONE_CLEANUP_AFTER_EVENT_SECONDS))):
-                    msgs = ev.get("reminder_messages", []) or []
-                    if msgs:
-                        had_forbidden = False
+                # Auto-delete reminder messages 24 hours after they were sent
+                msgs = ev.get("reminder_messages", []) or []
+                if msgs:
+                    current_time = time.time()
+                    remaining_msgs = []
+                    had_forbidden = False
+                    state_changed = False
 
-                        for item in msgs:
+                    for item in msgs:
+                        try:
+                            ch_id = int(item.get("channel_id") or channel.id)
+                            msg_id = int(item.get("message_id") or 0)
+                        except Exception:
+                            continue
+
+                        if msg_id <= 0:
+                            continue
+
+                        # Check if message is older than 24 hours
+                        sent_at = item.get("sent_at")
+                        if sent_at is None:
+                            # Legacy message without sent_at - use old behavior (delete after event + 24h)
+                            if now_dt >= (dt + timedelta(seconds=MILESTONE_CLEANUP_AFTER_EVENT_SECONDS)):
+                                sent_at = 0  # Force deletion
+                            else:
+                                remaining_msgs.append(item)
+                                continue
+
+                        message_age = current_time - sent_at
+                        if message_age < MILESTONE_CLEANUP_AFTER_EVENT_SECONDS:
+                            # Message is less than 24h old, keep it
+                            remaining_msgs.append(item)
+                            continue
+
+                        # Message is 24h+ old, delete it
+                        if had_forbidden:
+                            # Skip further deletes if we already hit a permission error
+                            continue
+
+                        ch = await get_text_channel(ch_id)
+                        if ch is None:
+                            state_changed = True
+                            continue
+
+                        try:
+                            await ch.get_partial_message(msg_id).delete()
+                            state_changed = True
+                        except discord.Forbidden:
+                            had_forbidden = True
+                            state_changed = True
+                            # Notify once then stop trying
                             try:
-                                ch_id = int(item.get("channel_id") or channel.id)
-                                msg_id = int(item.get("message_id") or 0)
+                                missing = missing_channel_perms(ch, ch.guild)
+                                await notify_owner_missing_perms(
+                                    ch.guild,
+                                    ch,
+                                    missing=missing,
+                                    action="delete old reminder messages (needs Manage Messages)",
+                                )
                             except Exception:
-                                continue
+                                pass
+                        except (discord.NotFound, discord.HTTPException):
+                            state_changed = True
+                            pass  # already gone or transient
 
-                            if msg_id <= 0:
-                                continue
-
-                            ch = await get_text_channel(ch_id)
-                            if ch is None:
-                                continue
-
-                            try:
-                                await ch.get_partial_message(msg_id).delete()
-                            except discord.Forbidden:
-                                had_forbidden = True
-                                # Don’t spam attempts forever; notify once then stop trying.
-                                try:
-                                    missing = missing_channel_perms(ch, ch.guild)
-                                    await notify_owner_missing_perms(
-                                        ch.guild,
-                                        ch,
-                                        missing=missing,
-                                        action="delete old milestone/repeat reminder messages (needs Manage Messages)",
-                                    )
-                                except Exception:
-                                    pass
-                                break
-                            except (discord.NotFound, discord.HTTPException):
-                                pass  # already gone or transient
-
-                        # Whether we deleted them or couldn't, we stop trying after this cleanup window
-                        ev["reminder_messages"] = []
-                        ev["reminders_cleaned"] = True
-                        mark_dirty()
-                        flush_if_dirty()
-
-                    else:
-                        ev["reminders_cleaned"] = True
+                    # Update the list to only keep messages we didn't delete
+                    if state_changed or len(remaining_msgs) != len(msgs):
+                        ev["reminder_messages"] = remaining_msgs
                         mark_dirty()
                         flush_if_dirty()
                         
@@ -2987,9 +3007,9 @@ async def update_countdowns():
                             try:
                                 m = await channel.send(text, allowed_mentions=allowed)
 
-                                # track for cleanup 24h after event passes
+                                # track for auto-delete 24h after sending
                                 ev.setdefault("reminder_messages", []).append(
-                                    {"channel_id": channel.id, "message_id": m.id}
+                                    {"channel_id": channel.id, "message_id": m.id, "sent_at": time.time()}
                                 )
 
                                 # ✅ stop re-sending every loop
@@ -3048,9 +3068,9 @@ async def update_countdowns():
                     try:
                         m = await channel.send(text, allowed_mentions=allowed_mentions)
 
-                        # ✅ track for cleanup 24h after event passes
+                        # ✅ track for auto-delete 24h after sending
                         ev.setdefault("reminder_messages", []).append(
-                            {"channel_id": channel.id, "message_id": m.id}
+                            {"channel_id": channel.id, "message_id": m.id, "sent_at": time.time()}
                         )
 
                         # mutate state
@@ -3114,9 +3134,9 @@ async def update_countdowns():
                                     allowed_mentions=discord.AllowedMentions.none(),
                                 )
 
-                                # ✅ track for cleanup 24h after event passes
+                                # ✅ track for cleanup 24h after send time
                                 ev.setdefault("reminder_messages", []).append(
-                                    {"channel_id": channel.id, "message_id": m.id}
+                                    {"channel_id": channel.id, "message_id": m.id, "sent_at": time.time()}
                                 )
 
                                 # mutate state
