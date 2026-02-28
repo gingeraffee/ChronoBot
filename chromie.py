@@ -3268,10 +3268,12 @@ async def _safe_ephemeral(interaction: discord.Interaction, content: str):
 
 @bot.tree.command(name="vote", description="Vote for Chromie on Top.gg to unlock supporter perks.")
 async def vote_cmd(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True, thinking=True)
+
     voted = await topgg_has_voted(interaction.user.id, force=True)
     status = "✅ You currently have supporter access." if voted else "❌ You don’t have an active vote yet."
 
-    await interaction.response.send_message(
+    await interaction.followup.send(
         f"{status}\n\n{PREMIUM_PERKS_TEXT}",
         ephemeral=True,
         view=build_vote_view(),
