@@ -142,18 +142,16 @@ async def topgg_has_voted(user_id: int, *, force: bool = False) -> bool:
         _vote_cache[user_id] = (now, voted)
         return voted
 
-    # IMPORTANT: keep this quick so slash commands never time out.
-    timeout = aiohttp.ClientTimeout(total=2.5)
-
-    # v0 vote check endpoint (classic, still widely used):
-    # GET https://top.gg/api/bots/{bot_id}/check?userId={user_id}
     url = f"{TOPGG_API_BASE}/bots/{bot_id}/check"
     headers = {
         "Authorization": TOPGG_TOKEN.strip(),
-        "User-Agent": "ChromieBot/TopggVoteCheck (Render)",
         "Accept": "application/json",
+        "User-Agent": "Chromie/TopggVoteCheck",
     }
     params = {"userId": str(user_id)}
+
+    # 🔥 Keep under Discord’s interaction window.
+    timeout = aiohttp.ClientTimeout(total=2.0)
 
     voted = True if TOPGG_FAIL_OPEN else False
 
@@ -163,11 +161,10 @@ async def topgg_has_voted(user_id: int, *, force: bool = False) -> bool:
                 ct = resp.headers.get("Content-Type", "")
                 text = await resp.text()
 
-                # Cloudflare challenge page => treat as "not voted" (fail closed)
+                # Cloudflare challenge HTML -> treat as "not voted" (or fail open if you want)
                 if _looks_like_cloudflare_html(text, ct):
                     voted = True if TOPGG_FAIL_OPEN else False
                 elif resp.status == 200:
-                    # Sometimes top.gg returns JSON but wrong content-type; allow parse anyway
                     try:
                         data = json.loads(text)
                         voted = bool(int(data.get("voted", 0) or 0))
