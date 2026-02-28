@@ -119,7 +119,15 @@ def build_vote_view() -> discord.ui.View:
 TOPGG_API_V1_BASE = "https://top.gg/api/v1"
 
 TOPGG_API_BASE = "https://top.gg/api"
+CF_MARKERS = ("cdn-cgi/challenge-platform", "__CF$cv$params", "cf-ray")
 
+def _looks_like_cloudflare_html(text: str, content_type: str) -> bool:
+    ct = (content_type or "").lower()
+    if "text/html" not in ct:
+        return False
+    t = (text or "")
+    return any(m in t for m in CF_MARKERS)
+    
 async def topgg_has_voted(user_id: int, *, force: bool = False) -> bool:
     now = time.monotonic()
     cached = _vote_cache.get(user_id)
@@ -127,26 +135,48 @@ async def topgg_has_voted(user_id: int, *, force: bool = False) -> bool:
     if (not force) and cached and (now - cached[0] <= VOTE_CACHE_TTL_SECONDS):
         return cached[1]
 
-    # Need BOTH token + bot id for the documented check endpoint
     bot_id = get_topgg_bot_id()
     if not TOPGG_TOKEN or not bot_id:
         voted = True if TOPGG_FAIL_OPEN else False
         _vote_cache[user_id] = (now, voted)
         return voted
 
+    # IMPORTANT: keep this quick so slash commands never time out.
+    timeout = aiohttp.ClientTimeout(total=2.5)
+
+    # v0 vote check endpoint (classic, still widely used):
+    # GET https://top.gg/api/bots/{bot_id}/check?userId={user_id}
     url = f"{TOPGG_API_BASE}/bots/{bot_id}/check"
-    headers = {"Authorization": TOPGG_TOKEN.strip()}  # v0 docs: no Bearer :contentReference[oaicite:2]{index=2}
+    headers = {
+        "Authorization": TOPGG_TOKEN.strip(),
+        "User-Agent": "ChromieBot/TopggVoteCheck (Render)",
+        "Accept": "application/json",
+    }
     params = {"userId": str(user_id)}
-    timeout = aiohttp.ClientTimeout(total=6)
+
+    voted = True if TOPGG_FAIL_OPEN else False
 
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.get(url, headers=headers, params=params) as resp:
-                if resp.status == 200:
-                    data = await resp.json(content_type=None)
-                    voted = bool(int(data.get("voted", 0) or 0))
+                ct = resp.headers.get("Content-Type", "")
+                text = await resp.text()
+
+                # Cloudflare challenge page => treat as "not voted" (fail closed)
+                if _looks_like_cloudflare_html(text, ct):
+                    voted = True if TOPGG_FAIL_OPEN else False
+                elif resp.status == 200:
+                    # Sometimes top.gg returns JSON but wrong content-type; allow parse anyway
+                    try:
+                        data = json.loads(text)
+                        voted = bool(int(data.get("voted", 0) or 0))
+                    except Exception:
+                        voted = True if TOPGG_FAIL_OPEN else False
                 else:
                     voted = True if TOPGG_FAIL_OPEN else False
+
+    except asyncio.TimeoutError:
+        voted = True if TOPGG_FAIL_OPEN else False
     except Exception:
         voted = True if TOPGG_FAIL_OPEN else False
 
