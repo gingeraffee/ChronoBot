@@ -687,8 +687,8 @@ def get_user_links() -> dict:
     return state.setdefault("user_links", {})
 
 
-def _today_local_date() -> date:
-    return datetime.now(DEFAULT_TZ).date()
+def _today_local_date(tz: ZoneInfo = DEFAULT_TZ) -> date:
+    return datetime.now(tz).date()
 
 
 def calendar_days_left(dt: datetime, now: Optional[datetime] = None) -> int:
@@ -767,8 +767,9 @@ STARTED_EVENT_KEEP_SECONDS = EVENT_START_GRACE_SECONDS  # or set to 10*60 for 10
 
 def prune_past_events(guild_state: dict, now: Optional[datetime] = None) -> int:
     """Delete events whose timestamp has passed, but keep 'just started' events for a short window."""
+    tz = get_guild_timezone(guild_state)
     if now is None:
-        now = datetime.now(DEFAULT_TZ)
+        now = datetime.now(tz)
 
     # Keep window must be at least the start-blast grace window
     keep_seconds = max(STARTED_EVENT_KEEP_SECONDS, EVENT_START_GRACE_SECONDS)
@@ -789,7 +790,7 @@ def prune_past_events(guild_state: dict, now: Optional[datetime] = None) -> int:
             continue
 
         try:
-            dt = datetime.fromtimestamp(ts, tz=DEFAULT_TZ)
+            dt = datetime.fromtimestamp(ts, tz=tz)
         except Exception:
             kept.append(ev)
             continue
@@ -2314,7 +2315,9 @@ def build_embed_for_guild(guild_state: dict) -> discord.Embed:
         events = []
     events = list(events)  # shallow copy of list
 
-    now = datetime.now(DEFAULT_TZ)
+    tz = get_guild_timezone(guild_state)
+
+    now = datetime.now(tz)
 
     # Sort by timestamp so "next upcoming" logic is true
     def _ts(ev):
@@ -2361,7 +2364,7 @@ def build_embed_for_guild(guild_state: dict) -> discord.Embed:
 
     for ev in events:
         try:
-            dt = datetime.fromtimestamp(float(ev["timestamp"]), tz=DEFAULT_TZ)
+            dt = datetime.fromtimestamp(float(ev["timestamp"]), tz=tz)
         except Exception:
             continue
 
@@ -2384,10 +2387,12 @@ def build_embed_for_guild(guild_state: dict) -> discord.Embed:
         # Use dynamic Discord timestamps (from spec) - client-side updates!
         unix_ts = int(dt.timestamp())
 
+        when_str = dt.strftime("%A, %d %B %Y at %H:%M %Z")
+
         lines = [
             f"{emoji} **{name}**",
-            f"**When:** <t:{unix_ts}:F>",  # Full date/time
-            f"**Countdown:** <t:{unix_ts}:R>",  # Relative time (auto-updates!)
+            f"**When:** {when_str}",
+            f"**Countdown:** <t:{unix_ts}:R>",
         ]
 
         # Only show owner if explicitly set via /seteventowner
@@ -2776,9 +2781,10 @@ async def event_index_autocomplete(
         return []
 
     g = get_guild_state(guild.id)
+    tz = get_guild_timezone(g)
     sort_events(g)
 
-    now = datetime.now(DEFAULT_TZ)
+    now = datetime.now(tz)
     cur = (current or "").strip().lower()
     grace = timedelta(seconds=EVENT_START_GRACE_SECONDS)
 
@@ -2790,7 +2796,7 @@ async def event_index_autocomplete(
             continue
 
         try:
-            dt = datetime.fromtimestamp(ts, tz=DEFAULT_TZ)
+            dt = datetime.fromtimestamp(ts, tz=tz)
         except Exception:
             continue
 
@@ -2822,20 +2828,21 @@ async def event_index_autocomplete(
 # ==========================
 @tasks.loop(minutes=15)
 async def weekly_digest_loop():
-    now = datetime.now(DEFAULT_TZ)
-
-    # Send once each Monday any time after 9:00 AM local time.
-    if now.weekday() != 0:  # Monday = 0
-        return
-    if now.hour < 9:
-        return
-
-    today_str = now.date().isoformat()
-    now_ts = int(now.timestamp())
-    cutoff_ts = now_ts + (7 * 86400)
-
     for gid_str, guild_state in list(state.get("guilds", {}).items()):
         try:
+            tz = get_guild_timezone(guild_state)
+            now = datetime.now(tz)
+
+            # Send once each Monday any time after 9:00 AM local time (per-server timezone).
+            if now.weekday() != 0:  # Monday = 0
+                continue
+            if now.hour < 9:
+                continue
+
+            today_str = now.date().isoformat()
+            now_ts = int(now.timestamp())
+            cutoff_ts = now_ts + (7 * 86400)
+
             d = guild_state.get("digest")
             if not isinstance(d, dict) or not d.get("enabled"):
                 continue
@@ -2856,7 +2863,7 @@ async def weekly_digest_loop():
             for ev in guild_state.get("events", []):
                 ts = ev.get("timestamp")
                 if isinstance(ts, int) and now_ts < ts <= cutoff_ts:
-                    dt = datetime.fromtimestamp(ts, tz=DEFAULT_TZ)
+                    dt = datetime.fromtimestamp(ts, tz=tz)
                     desc, _, _ = compute_time_left(now, dt)
                     upcoming.append(
                         f"• **{ev.get('name', 'Event')}** — {dt.strftime('%m/%d %I:%M %p')} ({desc})"
@@ -3199,7 +3206,7 @@ async def update_countdowns():
             # ---- Prune after processing (so start blast can happen) ----
             removed = prune_past_events(
                 guild_state,
-                now=datetime.now(DEFAULT_TZ) - timedelta(seconds=MILESTONE_CLEANUP_AFTER_EVENT_SECONDS),
+                now=datetime.now(get_guild_timezone(guild_state)) - timedelta(seconds=MILESTONE_CLEANUP_AFTER_EVENT_SECONDS),
             )
             if removed:
                 mark_dirty()
@@ -3325,8 +3332,9 @@ def format_events_list(guild_state: dict) -> str:
         if not isinstance(ts, (int, float)):
             continue
 
-        dt = datetime.fromtimestamp(ts, tz=DEFAULT_TZ)
-        now = datetime.now(DEFAULT_TZ)
+        tz = get_guild_timezone(guild_state)
+        dt = datetime.fromtimestamp(ts, tz=tz)
+        now = datetime.now(tz)
         desc, _, passed = compute_time_left(now, dt)
         status = "✅ done" if passed else "⏳ active"
 
@@ -3613,6 +3621,7 @@ async def addevent(interaction: discord.Interaction, date: str, time: str, name:
             return
 
         guild_state = get_guild_state(guild.id)
+        tz = get_guild_timezone(guild_state)
         is_dm = False
 
     else:
@@ -3646,6 +3655,7 @@ async def addevent(interaction: discord.Interaction, date: str, time: str, name:
             return
 
         guild_state = get_guild_state(guild.id)
+        tz = get_guild_timezone(guild_state)
         is_dm = True
 
     if not guild_state.get("event_channel_id"):
@@ -3657,11 +3667,11 @@ async def addevent(interaction: discord.Interaction, date: str, time: str, name:
 
     # EVENT LIMIT ENFORCEMENT (from spec)
     # Only count FUTURE events, not past ones
-    now = datetime.now(DEFAULT_TZ)
+    now = datetime.now(tz)
     all_events = guild_state.get("events", [])
     future_events = [
         ev for ev in all_events 
-        if datetime.fromtimestamp(ev.get("timestamp", 0), tz=DEFAULT_TZ) > now
+        if datetime.fromtimestamp(ev.get("timestamp", 0), tz=tz) > now
     ]
     current_event_count = len(future_events)
     
@@ -3723,9 +3733,9 @@ async def addevent(interaction: discord.Interaction, date: str, time: str, name:
         )
         return
 
-    dt = dt.replace(tzinfo=DEFAULT_TZ)
+    dt = dt.replace(tzinfo=tz)
 
-    if dt <= datetime.now(DEFAULT_TZ):
+    if dt <= datetime.now(tz):
         await interaction.edit_original_response(
             content="That date/time is in the past. Please choose a future time."
         )
@@ -3801,10 +3811,10 @@ async def nextevent(interaction: discord.Interaction):
     g = get_guild_state(guild.id)
     sort_events(g)
 
-    now = datetime.now(DEFAULT_TZ)
+    now = datetime.now(tz)
     next_ev = None
     for ev in g.get("events", []):
-        dt = datetime.fromtimestamp(ev["timestamp"], tz=DEFAULT_TZ)
+        dt = datetime.fromtimestamp(ev["timestamp"], tz=tz)
         if dt > now:
             next_ev = (ev, dt)
             break
@@ -3836,8 +3846,9 @@ async def eventinfo(interaction: discord.Interaction, index: int):
         await interaction.response.send_message("Invalid index. Use `/listevents` to see event numbers.", ephemeral=True)
         return
 
-    dt = datetime.fromtimestamp(ev["timestamp"], tz=DEFAULT_TZ)
-    now = datetime.now(DEFAULT_TZ)
+    tz = get_guild_timezone(g)
+    dt = datetime.fromtimestamp(ev["timestamp"], tz=tz)
+    now = datetime.now(tz)
     desc, _, passed = compute_time_left(now, dt)
     miles = ", ".join(str(x) for x in ev.get("milestones", DEFAULT_MILESTONES))
     repeat_every = ev.get("repeat_every_days")
@@ -3924,6 +3935,7 @@ async def editevent(interaction: discord.Interaction, index: int, name: Optional
     
     g = get_guild_state(guild.id)
     guild_state = g
+    tz = get_guild_timezone(guild_state)
     ev = get_event_by_index(g, index)
     if not ev:
         await interaction.edit_original_response(content="Invalid index. Use `/listevents`.")
@@ -3933,7 +3945,7 @@ async def editevent(interaction: discord.Interaction, index: int, name: Optional
         ev["name"] = name.strip()
 
     if date or time:
-        current_dt = datetime.fromtimestamp(ev["timestamp"], tz=DEFAULT_TZ)
+        current_dt = datetime.fromtimestamp(ev["timestamp"], tz=tz)
         new_date = current_dt.strftime("%m/%d/%Y")
         new_time = current_dt.strftime("%H:%M")
 
@@ -3943,14 +3955,14 @@ async def editevent(interaction: discord.Interaction, index: int, name: Optional
             new_time = time.strip()
 
         try:
-            dt = datetime.strptime(f"{new_date} {new_time}", "%m/%d/%Y %H:%M").replace(tzinfo=DEFAULT_TZ)
+            dt = datetime.strptime(f"{new_date} {new_time}", "%m/%d/%Y %H:%M").replace(tzinfo=tz)
         except ValueError:
             await interaction.edit_original_response(content=
                 "I couldn't understand that date/time.\nUse MM/DD/YYYY + 24-hour HH:MM."
             )
             return
 
-        if dt <= datetime.now(DEFAULT_TZ):
+        if dt <= datetime.now(tz):
             await interaction.edit_original_response(content=
                 "That date/time is in the past. Please choose a future time."
             )
@@ -3970,7 +3982,7 @@ async def editevent(interaction: discord.Interaction, index: int, name: Optional
         if ch:
             await refresh_countdown_message(guild, guild_state)
 
-    dt_final = datetime.fromtimestamp(ev["timestamp"], tz=DEFAULT_TZ)
+    dt_final = datetime.fromtimestamp(ev["timestamp"], tz=get_guild_timezone(guild_state))
     await interaction.edit_original_response(content=
         f"✅ Updated event #{index}: **{ev['name']}**\n"
         f"🗓️ {dt_final.strftime('%B %d, %Y at %I:%M %p %Z')}"
@@ -4002,17 +4014,17 @@ async def dupeevent(interaction: discord.Interaction, index: int, date: str, tim
         await interaction.edit_original_response(content="Invalid index. Use `/listevents`.")
         return
 
-    orig_dt = datetime.fromtimestamp(ev["timestamp"], tz=DEFAULT_TZ)
+    orig_dt = datetime.fromtimestamp(ev["timestamp"], tz=tz)
     use_time = time.strip() if time and time.strip() else orig_dt.strftime("%H:%M")
     use_name = name.strip() if name and name.strip() else ev["name"]
 
     try:
-        dt = datetime.strptime(f"{date.strip()} {use_time}", "%m/%d/%Y %H:%M").replace(tzinfo=DEFAULT_TZ)
+        dt = datetime.strptime(f"{date.strip()} {use_time}", "%m/%d/%Y %H:%M").replace(tzinfo=tz)
     except ValueError:
         await interaction.edit_original_response(content="Invalid date/time. Use MM/DD/YYYY + 24-hour HH:MM.")
         return
 
-    if dt <= datetime.now(DEFAULT_TZ):
+    if dt <= datetime.now(tz):
         await interaction.edit_original_response(content="That date/time is in the past. Please choose a future time.")
         return
 
@@ -4085,17 +4097,17 @@ async def remindall(interaction: discord.Interaction, index: Optional[int] = Non
 
     ev = None
     dt = None
-    now = datetime.now(DEFAULT_TZ)
+    now = datetime.now(tz)
 
     if index is not None:
         ev = get_event_by_index(g, index)
         if not ev:
             await interaction.edit_original_response(content="Invalid index. Use `/listevents`.")
             return
-        dt = datetime.fromtimestamp(ev["timestamp"], tz=DEFAULT_TZ)
+        dt = datetime.fromtimestamp(ev["timestamp"], tz=tz)
     else:
         for candidate in g.get("events", []):
-            cdt = datetime.fromtimestamp(candidate["timestamp"], tz=DEFAULT_TZ)
+            cdt = datetime.fromtimestamp(candidate["timestamp"], tz=tz)
             if cdt > now:
                 ev = candidate
                 dt = cdt
@@ -4304,6 +4316,7 @@ async def template_load_cmd(interaction: discord.Interaction, name: str, date: s
 
     g = get_guild_state(guild.id)
     guild_state = g
+    tz = get_guild_timezone(guild_state)
     templates = g.get("templates", {})
     key = (name or "").strip().lower()
     tpl = templates.get(key)
@@ -4312,12 +4325,12 @@ async def template_load_cmd(interaction: discord.Interaction, name: str, date: s
         return
 
     try:
-        dt = datetime.strptime(f"{date} {time}", "%m/%d/%Y %H:%M").replace(tzinfo=DEFAULT_TZ)
+        dt = datetime.strptime(f"{date} {time}", "%m/%d/%Y %H:%M").replace(tzinfo=tz)
     except ValueError:
         await interaction.response.send_message("Invalid date/time. Use MM/DD/YYYY + 24-hour HH:MM.", ephemeral=True)
         return
 
-    if dt <= datetime.now(DEFAULT_TZ):
+    if dt <= datetime.now(tz):
         await interaction.response.send_message("That date/time is in the past. Choose a future time.", ephemeral=True)
         return
 
@@ -4632,7 +4645,7 @@ async def setrepeat(interaction: discord.Interaction, index: int, every_days: in
         await interaction.response.send_message(f"Index must be between 1 and {len(events)}.", ephemeral=True)
         return
 
-    today = _today_local_date().isoformat()
+    today = _today_local_date(get_guild_timezone(g)).isoformat()
     ev["repeat_every_days"] = int(every_days)
     ev["repeat_anchor_date"] = today
     ev["announced_repeat_dates"] = []
@@ -4688,11 +4701,12 @@ async def archivepast(interaction: discord.Interaction):
     
     g = get_guild_state(guild.id)
     guild_state = g
+    tz = get_guild_timezone(guild_state)
     sort_events(g)
 
-    now = datetime.now(DEFAULT_TZ)
+    now = datetime.now(tz)
     before = len(g.get("events", []))
-    g["events"] = [ev for ev in g.get("events", []) if datetime.fromtimestamp(ev["timestamp"], tz=DEFAULT_TZ) > now]
+    g["events"] = [ev for ev in g.get("events", []) if datetime.fromtimestamp(ev["timestamp"], tz=tz) > now]
     after = len(g["events"])
     removed = before - after
 
