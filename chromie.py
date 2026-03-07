@@ -4101,7 +4101,7 @@ async def remindall(interaction: discord.Interaction, index: Optional[int] = Non
     tz_name = g.get("timezone") or "UTC"
     try:
         tz = ZoneInfo(tz_name)
-    exccept Exception:
+    except Exception:
         tz = ZoneInfo("UTC")
         
     now = datetime.now(tz)
