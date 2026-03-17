@@ -4932,7 +4932,11 @@ async def theme_cmd(interaction: discord.Interaction, theme: str):
         choices = ", ".join(sorted(THEMES.keys()))
         await interaction.edit_original_response(content=f"Unknown theme: `{theme}`. Available: {choices}")
         return
-
+        
+    g = get_guild_state(guild.id)
+    # Pro inherits supporter perks. Only require a Top.gg vote if Pro is not active.
+    pro_active = is_pro(guild_data=g)  # adjust args to match your helper signature
+    
     # Classic is always allowed; supporter themes require an active /vote by the caller.
     if THEMES[theme_id].get("supporter_only"):
         voted = await topgg_has_voted(interaction.user.id, force=True)
@@ -4940,7 +4944,6 @@ async def theme_cmd(interaction: discord.Interaction, theme: str):
             await send_vote_required(interaction, feature_label=f"`{theme_id}` theme")
             return
 
-    g = get_guild_state(guild.id)
     g["theme"] = theme_id
     save_state()
 
