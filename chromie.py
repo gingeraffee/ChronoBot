@@ -4937,8 +4937,8 @@ async def theme_cmd(interaction: discord.Interaction, theme: str):
     # Pro inherits supporter perks. Only require a Top.gg vote if Pro is not active.
     pro_active = is_pro(guild_state=g)  # adjust args to match your helper signature
     
-    # Classic is always allowed; supporter themes require an active /vote by the caller.
-    if THEMES[theme_id].get("supporter_only"):
+    # Classic is always allowed; supporter themes require Pro or an active /vote by the caller.
+    if THEMES[theme_id].get("supporter_only") and not pro_active:
         voted = await topgg_has_voted(interaction.user.id, force=True)
         if not voted:
             await send_vote_required(interaction, feature_label=f"`{theme_id}` theme")
