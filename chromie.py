@@ -84,7 +84,7 @@ async def maybe_vote_nudge(interaction: discord.Interaction, reason: str) -> Non
     msg = (
         f"💜 {reason}\n"
         "Voting unlocks supporter perks:\n"
-        "• /theme • /milestones advanced • /template save/load • /banner set • /digest enable"
+        "• /theme • /milestones advanced • /milestones autodelete • /template save/load • /banner set • /digest enable"
     )
 
     # Use followup if already responded
@@ -404,6 +404,7 @@ PREMIUM_PERKS_TEXT = (
     "Voting unlocks:\n"
     "• /theme (premium themes)\n"
     "• /milestones advanced\n"
+    "• /milestones autodelete\n"
     "• /template save + /template load\n"
     "• /banner set\n"
     "• /digest enable"
@@ -662,6 +663,7 @@ def get_guild_state(guild_id: int) -> dict:
                 "grace_until": None,
                 "migration_mode": False  # Disabled - tier limits now enforced
             },
+            "auto_delete_milestones": True,
         }
 
     else:
@@ -680,6 +682,7 @@ def get_guild_state(guild_id: int) -> dict:
         guilds[gid].setdefault("digest", {"enabled": False, "channel_id": None, "last_sent_date": None})
         guilds[gid].setdefault("supporter", {"last_vote_at": None, "vote_until": None})
         guilds[gid].setdefault("pro", {"pro_active": False, "pro_until": None, "grace_until": None, "migration_mode": False})
+        guilds[gid].setdefault("auto_delete_milestones", True)
     return guilds[gid]
 
 
@@ -810,6 +813,10 @@ def prune_past_events(guild_state: dict, now: Optional[datetime] = None) -> int:
 
     return removed
 async def cleanup_milestones_if_due(guild_state: dict, ev: dict):
+    # Skip if server has auto-delete disabled (Supporter perk)
+    if not guild_state.get("auto_delete_milestones", True):
+        return
+
     # Backward compatible defaults
     ev.setdefault("milestone_messages", [])
     ev.setdefault("milestones_cleaned", False)
@@ -1254,7 +1261,8 @@ async def send_onboarding_for_guild(guild: discord.Guild):
         "• 5 events (vs 3 for Free)\n"
         "• `/theme` — 14 premium themes (sports, seasonal, minimal, etc.)\n"
         "• `/banner set` — custom event banner images\n"
-        "• `/milestones advanced` — server-wide milestone schedules\n\n"
+        "• `/milestones advanced` — server-wide milestone schedules\n"
+        "• `/milestones autodelete` — keep milestone announcements permanently\n\n"
         "**How to unlock:**\n"
         "Run `/vote` to get the link. Voting takes 10 seconds and helps Chromie grow!\n\n"
         "**💎 Chromie Pro ($2.99/month)**\n"
@@ -2950,8 +2958,9 @@ async def update_countdowns():
                     mark_dirty()
 
                 # Auto-delete reminder messages 24 hours after they were sent
+                # (skip if server has auto-delete disabled — Supporter perk)
                 msgs = ev.get("reminder_messages", []) or []
-                if msgs:
+                if msgs and guild_state.get("auto_delete_milestones", True):
                     current_time = time.time()
                     remaining_msgs = []
                     had_forbidden = False
@@ -4267,6 +4276,28 @@ async def milestones_advanced_cmd(interaction: discord.Interaction, milestones: 
 
     await interaction.response.send_message(note, ephemeral=True)
 
+
+@milestones_group.command(name="autodelete", description="Toggle auto-deletion of milestone announcements (Supporter perk).")
+@app_commands.describe(
+    enabled="True = auto-delete after 24h (default), False = keep milestone messages permanently",
+)
+@require_vote("/milestones autodelete")
+@app_commands.checks.has_permissions(manage_guild=True)
+@app_commands.guild_only()
+async def milestones_autodelete_cmd(interaction: discord.Interaction, enabled: bool):
+    guild = interaction.guild
+    assert guild is not None
+
+    g = get_guild_state(guild.id)
+    g["auto_delete_milestones"] = enabled
+    save_state()
+
+    if enabled:
+        msg = "✅ Milestone auto-delete is now **ON**. Announcement messages will be deleted after 24 hours."
+    else:
+        msg = "✅ Milestone auto-delete is now **OFF**. Announcement messages will stay in the channel permanently."
+
+    await interaction.response.send_message(msg, ephemeral=True)
 
 
 template_group = app_commands.Group(name="template", description="Event templates (Supporter perk)")
