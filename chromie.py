@@ -3921,7 +3921,7 @@ async def removeevent(interaction: discord.Interaction, index: int):
     if channel_id:
         ch = await get_text_channel(channel_id)
         if ch:
-            await refresh_countdown_message(guild, guild_state)
+            await rebuild_pinned_message(guild.id, ch, guild_state)
 
     await interaction.edit_original_response(content=f"🗑 Removed event **{ev['name']}**.")
 
