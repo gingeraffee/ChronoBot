@@ -3785,7 +3785,7 @@ async def addevent(interaction: discord.Interaction, date: str, time: str, name:
     if channel_id:
         channel = await get_text_channel(channel_id)
         if channel is not None:
-            await refresh_countdown_message(guild, guild_state)
+            await rebuild_pinned_message(guild.id, channel, guild_state)
 
     await interaction.edit_original_response(
         content=f"✅ Added event **{name}** on {dt.strftime('%B %d, %Y at %I:%M %p %Z')} in server **{guild.name}**.\n• {tier_name}: {len(guild_state['events'])}/{event_limit if event_limit else '∞'} events"
