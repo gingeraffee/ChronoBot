@@ -747,13 +747,22 @@ def format_time_unit(total_seconds: int, unit: str) -> str:
         weeks = days // 7
         return f"{weeks} week{'s' if weeks != 1 else ''}"
     if unit == "detailed":
-        weeks = days // 7
-        rem = days % 7
-        if weeks == 0:
+        months = days // 30
+        rem = days % 30
+        weeks = rem // 7
+        rem_days = rem % 7
+        parts = []
+        if months:
+            parts.append(f"{months} month{'s' if months != 1 else ''}")
+        if weeks:
+            parts.append(f"{weeks} week{'s' if weeks != 1 else ''}")
+        if rem_days:
+            parts.append(f"{rem_days} day{'s' if rem_days != 1 else ''}")
+        if not parts:
             return f"{days} day{'s' if days != 1 else ''}"
-        if rem == 0:
-            return f"{weeks} week{'s' if weeks != 1 else ''}"
-        return f"{weeks} week{'s' if weeks != 1 else ''} and {rem} day{'s' if rem != 1 else ''}"
+        if len(parts) == 1:
+            return parts[0]
+        return ", ".join(parts[:-1]) + f" and {parts[-1]}"
     return f"{days} day{'s' if days != 1 else ''}"
 
 
