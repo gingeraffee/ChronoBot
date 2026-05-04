@@ -664,6 +664,7 @@ def get_guild_state(guild_id: int) -> dict:
                 "migration_mode": False  # Disabled - tier limits now enforced
             },
             "auto_delete_milestones": True,
+            "time_unit": "discord",
         }
 
     else:
@@ -683,6 +684,7 @@ def get_guild_state(guild_id: int) -> dict:
         guilds[gid].setdefault("supporter", {"last_vote_at": None, "vote_until": None})
         guilds[gid].setdefault("pro", {"pro_active": False, "pro_until": None, "grace_until": None, "migration_mode": False})
         guilds[gid].setdefault("auto_delete_milestones", True)
+        guilds[gid].setdefault("time_unit", "discord")
     return guilds[gid]
 
 
@@ -735,6 +737,25 @@ def compute_time_left(now: datetime, target_dt: datetime) -> tuple[str, int, boo
     if is_past:
         return f"Happened {desc} ago", days, True
     return desc, days, False
+
+def format_time_unit(total_seconds: int, unit: str) -> str:
+    """Format a positive duration in the requested unit for pinned embed display."""
+    days = total_seconds // 86400
+    if unit == "days":
+        return f"{days} day{'s' if days != 1 else ''}"
+    if unit == "weeks":
+        weeks = days // 7
+        return f"{weeks} week{'s' if weeks != 1 else ''}"
+    if unit == "detailed":
+        weeks = days // 7
+        rem = days % 7
+        if weeks == 0:
+            return f"{days} day{'s' if days != 1 else ''}"
+        if rem == 0:
+            return f"{weeks} week{'s' if weeks != 1 else ''}"
+        return f"{weeks} week{'s' if weeks != 1 else ''} and {rem} day{'s' if rem != 1 else ''}"
+    return f"{days} day{'s' if days != 1 else ''}"
+
 
 def parse_milestones(text: str) -> Optional[List[int]]:
     """
@@ -1231,7 +1252,8 @@ async def send_onboarding_for_guild(guild: discord.Guild):
         "• `/eventinfo index:` (details)\n"
         "• `/editevent` • `/removeevent`\n"
         "• `/remindall` (manual reminder)\n"
-        "• `/silence` (pause reminders without deleting)\n\n"
+        "• `/silence` (pause reminders without deleting)\n"
+        "• `/timeformat` (show time as days, weeks, or detailed breakdown)\n\n"
         "**🔔 Reminders & mentions:**\n"
         f"Milestone reminders post in your event channel ({milestone_str} by default). "
         "Timezone is **America/Chicago**.\n"
@@ -2344,6 +2366,7 @@ def build_embed_for_guild(guild_state: dict) -> discord.Embed:
     )
 
     emoji = layout.get("emoji", "🕒")
+    time_unit = guild_state.get("time_unit", "discord")
 
     # Theme-provided subtitle/heading (fallback)
     theme_subtitle = layout.get("subtitle", layout.get("description", "📅 Upcoming events:"))
@@ -2397,10 +2420,15 @@ def build_embed_for_guild(guild_state: dict) -> discord.Embed:
 
         when_str = dt.strftime("%A, %d %B %Y at %H:%M %Z")
 
+        if time_unit == "discord":
+            countdown_str = f"<t:{unix_ts}:R>"
+        else:
+            countdown_str = format_time_unit(int(delta.total_seconds()), time_unit)
+
         lines = [
             f"{emoji} **{name}**",
             f"**When:** {when_str}",
-            f"**Countdown:** <t:{unix_ts}:R>",
+            f"**Countdown:** {countdown_str}",
         ]
 
         # Only show owner if explicitly set via /seteventowner
@@ -4985,6 +5013,40 @@ async def theme_cmd(interaction: discord.Interaction, theme: str):
         pass
 
     await interaction.edit_original_response(content=f"Theme set to **{_THEME_LABELS.get(theme_id, theme_id.title())}**.")
+
+
+@bot.tree.command(name="timeformat", description="Set how time remaining is displayed in the countdown embed.")
+@app_commands.describe(unit="Display format for the countdown timer")
+@app_commands.choices(unit=[
+    app_commands.Choice(name="Discord (default — e.g. 'in 3 months')", value="discord"),
+    app_commands.Choice(name="Days (e.g. '90 days')", value="days"),
+    app_commands.Choice(name="Weeks (e.g. '12 weeks')", value="weeks"),
+    app_commands.Choice(name="Detailed (e.g. '12 weeks and 6 days')", value="detailed"),
+])
+@app_commands.checks.has_permissions(manage_guild=True)
+@app_commands.guild_only()
+async def timeunit_cmd(interaction: discord.Interaction, unit: str):
+    guild = interaction.guild
+    assert guild is not None
+
+    await interaction.response.defer(ephemeral=True)
+
+    g = get_guild_state(guild.id)
+    g["time_unit"] = unit
+    save_state()
+
+    try:
+        await refresh_countdown_message(guild, g)
+    except Exception:
+        pass
+
+    _UNIT_LABELS = {
+        "discord": "Discord native (e.g. 'in 3 months')",
+        "days": "Days (e.g. '90 days')",
+        "weeks": "Weeks (e.g. '12 weeks')",
+        "detailed": "Detailed (e.g. '12 weeks and 6 days')",
+    }
+    await interaction.edit_original_response(content=f"Time display set to **{_UNIT_LABELS[unit]}**.")
 
 
 @bot.tree.command(name="chronohelp", description="Show Chromie help (paged).")
