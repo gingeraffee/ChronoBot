@@ -3003,58 +3003,57 @@ async def event_index_autocomplete(
 @tasks.loop(minutes=15)
 async def weekly_digest_loop():
     for gid_str, guild_state in list(state.get("guilds", {}).items()):
-        try:
-            tz = get_guild_timezone(guild_state)
-            now = datetime.now(tz)
+        for cid, channel_state in iter_channel_states(guild_state):
+            try:
+                tz = get_guild_timezone(channel_state)
+                now = datetime.now(tz)
 
-            # Send once each Monday any time after 9:00 AM local time (per-server timezone).
-            if now.weekday() != 0:  # Monday = 0
+                # Send once each Monday any time after 9:00 AM local (per-channel timezone).
+                if now.weekday() != 0:  # Monday = 0
+                    continue
+                if now.hour < 9:
+                    continue
+
+                today_str = now.date().isoformat()
+                now_ts = int(now.timestamp())
+                cutoff_ts = now_ts + (7 * 86400)
+
+                d = channel_state.get("digest")
+                if not isinstance(d, dict) or not d.get("enabled"):
+                    continue
+                if d.get("last_sent_date") == today_str:
+                    continue
+
+                # Default digest target is the countdown channel itself.
+                ch_id = d.get("channel_id") or cid
+                channel = await get_text_channel(int(ch_id))
+                if channel is None:
+                    continue
+
+                sort_events(channel_state)
+
+                upcoming = []
+                for ev in channel_state.get("events", []):
+                    ts = ev.get("timestamp")
+                    if isinstance(ts, int) and now_ts < ts <= cutoff_ts:
+                        dt = datetime.fromtimestamp(ts, tz=tz)
+                        desc, _, _ = compute_time_left(now, dt)
+                        upcoming.append(
+                            f"• **{ev.get('name', 'Event')}** — {dt.strftime('%m/%d %I:%M %p')} ({desc})"
+                        )
+
+                text = "📬 **Weekly Digest (Next 7 days)**\n"
+                text += "\n".join(upcoming[:15]) if upcoming else "No events in the next 7 days."
+
+                await channel.send(text, allowed_mentions=discord.AllowedMentions.none())
+
+                d["last_sent_date"] = today_str
+                channel_state["digest"] = d
+                save_state()
+
+            except Exception as e:
+                print(f"[Digest] guild {gid_str} / channel {cid} failed: {type(e).__name__}: {e}")
                 continue
-            if now.hour < 9:
-                continue
-
-            today_str = now.date().isoformat()
-            now_ts = int(now.timestamp())
-            cutoff_ts = now_ts + (7 * 86400)
-
-            d = guild_state.get("digest")
-            if not isinstance(d, dict) or not d.get("enabled"):
-                continue
-            if d.get("last_sent_date") == today_str:
-                continue
-
-            ch_id = d.get("channel_id") or guild_state.get("event_channel_id")
-            if not ch_id:
-                continue
-
-            channel = await get_text_channel(int(ch_id))
-            if channel is None:
-                continue
-
-            sort_events(guild_state)
-
-            upcoming = []
-            for ev in guild_state.get("events", []):
-                ts = ev.get("timestamp")
-                if isinstance(ts, int) and now_ts < ts <= cutoff_ts:
-                    dt = datetime.fromtimestamp(ts, tz=tz)
-                    desc, _, _ = compute_time_left(now, dt)
-                    upcoming.append(
-                        f"• **{ev.get('name', 'Event')}** — {dt.strftime('%m/%d %I:%M %p')} ({desc})"
-                    )
-
-            text = "📬 **Weekly Digest (Next 7 days)**\n"
-            text += "\n".join(upcoming[:15]) if upcoming else "No events in the next 7 days."
-
-            await channel.send(text, allowed_mentions=discord.AllowedMentions.none())
-
-            d["last_sent_date"] = today_str
-            guild_state["digest"] = d
-            save_state()
-
-        except Exception as e:
-            print(f"[Digest] guild {gid_str} failed: {type(e).__name__}: {e}")
-            continue
 
 
 @weekly_digest_loop.before_loop
