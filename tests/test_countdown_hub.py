@@ -112,6 +112,22 @@ def test_theme_preview_apply_label_reflects_lock():
     assert any(l == "Apply this theme" for l in pro_labels)
 
 
+def test_timezone_picker_options_valid():
+    import pytz
+    sel = chromie.CountdownTimezoneSelect()
+    # within Discord's 25-option cap, and includes the custom-entry escape hatch
+    assert len(sel.options) <= 25
+    assert any(o.value == "__other__" for o in sel.options)
+    ianas = [iana for _lbl, iana in chromie.COMMON_TIMEZONES]
+    assert len(ianas) == len(set(ianas)), "duplicate timezone in the picker"
+    # every offered timezone must be a real IANA zone (no validation errors on pick)
+    bad = [z for z in ianas if z not in pytz.all_timezones]
+    assert not bad, f"invalid IANA timezones in picker: {bad}"
+    # the picker's values feed get_guild_timezone -> must resolve, not fall back
+    for z in ianas:
+        assert chromie.get_guild_timezone({"timezone": z}).key == z
+
+
 def test_sub_and_modal_views_construct():
     gid, cid = fresh_gid(), 9
     chromie.get_channel_state(gid, cid)

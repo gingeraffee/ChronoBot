@@ -4210,6 +4210,57 @@ class CountdownRoleView(discord.ui.View):
         self.add_item(CountdownBackButton())
 
 
+# Curated, friendly-labelled timezones for the picker (value = canonical IANA
+# name). Covers the common cases so people don't have to know the exact spelling;
+# the "Other" option still opens the modal for anything not listed.
+COMMON_TIMEZONES = [
+    ("UTC", "UTC"),
+    ("US Eastern — New York", "America/New_York"),
+    ("US Central — Chicago", "America/Chicago"),
+    ("US Mountain — Denver", "America/Denver"),
+    ("US Arizona (no DST)", "America/Phoenix"),
+    ("US Pacific — Los Angeles", "America/Los_Angeles"),
+    ("US Alaska — Anchorage", "America/Anchorage"),
+    ("US Hawaii — Honolulu", "Pacific/Honolulu"),
+    ("Canada Eastern — Toronto", "America/Toronto"),
+    ("Mexico City", "America/Mexico_City"),
+    ("Brazil — São Paulo", "America/Sao_Paulo"),
+    ("UK — London", "Europe/London"),
+    ("Central Europe — Paris", "Europe/Paris"),
+    ("Central Europe — Berlin", "Europe/Berlin"),
+    ("Eastern Europe — Athens", "Europe/Athens"),
+    ("Moscow", "Europe/Moscow"),
+    ("India — Kolkata", "Asia/Kolkata"),
+    ("UAE — Dubai", "Asia/Dubai"),
+    ("Singapore", "Asia/Singapore"),
+    ("China — Shanghai", "Asia/Shanghai"),
+    ("Japan — Tokyo", "Asia/Tokyo"),
+    ("Australia Eastern — Sydney", "Australia/Sydney"),
+    ("New Zealand — Auckland", "Pacific/Auckland"),
+]
+
+
+class CountdownTimezoneSelect(discord.ui.Select):
+    def __init__(self):
+        options = [discord.SelectOption(label=lbl[:100], value=iana) for lbl, iana in COMMON_TIMEZONES]
+        options.append(discord.SelectOption(
+            label="Other — type any timezone…", value="__other__", emoji="⌨️",
+            description="Enter a custom IANA zone (e.g. Europe/Lisbon)"))
+        super().__init__(placeholder="Pick your timezone…", min_values=1, max_values=1, options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        view = self.view
+        gid, cid = view.guild_id, view.channel_id
+        choice = self.values[0]
+        if choice == "__other__":
+            await interaction.response.send_modal(CountdownTimezoneModal(gid, cid, interaction))
+            return
+        cs = get_channel_state(gid, cid)
+        cs["timezone"] = choice
+        save_state()
+        await _countdown_apply(interaction, gid, cid, confirm=f"✅ Timezone set to `{choice}`.")
+
+
 class CountdownTimezoneModal(discord.ui.Modal):
     def __init__(self, guild_id: int, channel_id: int, parent: discord.Interaction):
         super().__init__(title="Set channel timezone")
@@ -4491,7 +4542,15 @@ class CountdownSettingSelect(discord.ui.Select):
                 view=CountdownAutoDeleteView(gid, cid),
             )
         elif choice == "timezone":
-            await interaction.response.send_modal(CountdownTimezoneModal(gid, cid, interaction))
+            cur = get_channel_state(gid, cid).get("timezone") or "UTC"
+            await interaction.response.edit_message(
+                embed=discord.Embed(
+                    title="🌍 Timezone",
+                    description=f"Current: `{cur}`.\nPick yours from the list — or choose **Other** to type any IANA zone.",
+                    color=EMBED_COLOR,
+                ),
+                view=CountdownSubView(gid, cid, CountdownTimezoneSelect()),
+            )
         elif choice in ("title", "description"):
             if not is_pro(g):
                 await interaction.response.send_message(
