@@ -2913,6 +2913,9 @@ async def ensure_owner_name_cached(guild: discord.Guild, ev: dict) -> bool:
         return False
 
 async def dm_owner_if_set(guild: discord.Guild, ev: dict, message: str):
+    # Owner DMs are opt-in per event (default OFF). Set via the /event hub.
+    if not ev.get("dm_opt_in"):
+        return
     owner_id = ev.get("owner_user_id")
     if not owner_id:
         return
@@ -4198,6 +4201,789 @@ async def countdown_hub(interaction: discord.Interaction):
     )
 
 
+# ==========================
+# /event HUB — per-event editor (pick an event → actions)
+# ==========================
+# Replaces editevent/removeevent/eventinfo/setmilestones/resetmilestones/silence/
+# seteventowner/cleareventowner/banner/setrepeat/clearrepeat/dupeevent/
+# editevent_reminder/clear_reminder_time, plus the per-event owner-DM opt-in.
+# Views hold a direct reference to the event dict so actions stay correct even
+# when re-sorting shifts list indices.
+
+def _event_dt(ev: dict, tz) -> datetime:
+    return datetime.fromtimestamp(ev.get("timestamp", 0), tz=tz)
+
+
+def build_event_hub_embed(cs: dict, guild_state: dict) -> discord.Embed:
+    text = format_events_list(cs)
+    e = discord.Embed(title="🗓️ Events", description=text[:4000], color=EMBED_COLOR)
+    e.set_footer(text="Pick an event to manage it, or add a new one.")
+    return e
+
+
+def build_event_detail_embed(cs: dict, guild_state: dict, ev: dict) -> discord.Embed:
+    tz = get_guild_timezone(cs)
+    dt = _event_dt(ev, tz)
+    now = datetime.now(tz)
+    desc, _, passed = compute_time_left(now, dt)
+    miles = ", ".join(str(x) for x in ev.get("milestones", DEFAULT_MILESTONES)) or "—"
+    repeat_every = ev.get("repeat_every_days")
+    repeat_note = f"every {repeat_every} day(s)" if isinstance(repeat_every, int) and repeat_every > 0 else "off"
+    owner_id = ev.get("owner_user_id")
+    owner_note = f"<@{owner_id}>" if owner_id else "none"
+    reminder = ev.get("reminder_time") or "event time"
+    dm = "✅ on" if ev.get("dm_opt_in") else "🔕 off"
+    banner = "✅ set" if ev.get("banner_url") else "—"
+
+    e = discord.Embed(title=f"🗓️ {str(ev.get('name', 'Event'))[:240]}", color=EMBED_COLOR)
+    e.add_field(name="When", value=dt.strftime("%B %d, %Y at %I:%M %p %Z"), inline=False)
+    e.add_field(name="Countdown", value=(f"{desc} remaining" if not passed else "started / passed"), inline=False)
+    e.add_field(name="🔔 Milestones", value=miles, inline=True)
+    e.add_field(name="🕐 Reminder time", value=reminder, inline=True)
+    e.add_field(name="🔁 Repeat", value=repeat_note, inline=True)
+    e.add_field(name="👤 Owner", value=owner_note, inline=True)
+    e.add_field(name="📨 Owner DMs", value=dm, inline=True)
+    e.add_field(name="🖼️ Banner", value=banner, inline=True)
+    e.add_field(name="🔕 Silenced", value=("yes" if ev.get("silenced") and not passed else "no"), inline=True)
+    return e
+
+
+async def _event_apply(interaction: discord.Interaction, gid: int, cid: int, ev: dict, *, confirm: str):
+    """Component path: refresh the pin + re-render the event detail in place."""
+    await _countdown_refresh_pin(gid, cid)
+    g = get_guild_state(gid)
+    cs = get_channel_state(gid, cid)
+    embed = build_event_detail_embed(cs, g, ev)
+    embed.description = confirm
+    await interaction.response.edit_message(embed=embed, view=EventDetailView(gid, cid, ev))
+
+
+async def _event_apply_via_parent(parent: discord.Interaction, gid: int, cid: int, ev: dict, *, confirm: str):
+    """Modal path: refresh the pin + re-render the event detail on the parent message."""
+    await _countdown_refresh_pin(gid, cid)
+    g = get_guild_state(gid)
+    cs = get_channel_state(gid, cid)
+    embed = build_event_detail_embed(cs, g, ev)
+    embed.description = confirm
+    try:
+        await parent.edit_original_response(embed=embed, view=EventDetailView(gid, cid, ev))
+    except Exception:
+        pass
+
+
+class EventBackToListButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="Back to events", emoji="⬅️", style=discord.ButtonStyle.secondary, row=1)
+
+    async def callback(self, interaction: discord.Interaction):
+        view = self.view
+        g = get_guild_state(view.guild_id)
+        cs = get_channel_state(view.guild_id, view.channel_id)
+        await interaction.response.edit_message(
+            embed=build_event_hub_embed(cs, g), view=EventHubView(view.guild_id, view.channel_id)
+        )
+
+
+class EventDetailBackButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="Back", emoji="⬅️", style=discord.ButtonStyle.secondary, row=1)
+
+    async def callback(self, interaction: discord.Interaction):
+        view = self.view
+        g = get_guild_state(view.guild_id)
+        cs = get_channel_state(view.guild_id, view.channel_id)
+        await interaction.response.edit_message(
+            embed=build_event_detail_embed(cs, g, view.ev),
+            view=EventDetailView(view.guild_id, view.channel_id, view.ev),
+        )
+
+
+class EventListSelect(discord.ui.Select):
+    def __init__(self, cs: dict):
+        tz = get_guild_timezone(cs)
+        sort_events(cs)
+        opts = []
+        for i, ev in enumerate(cs.get("events", [])[:25]):
+            dt = _event_dt(ev, tz)
+            opts.append(discord.SelectOption(
+                label=f"{i + 1}. {str(ev.get('name', 'Event'))[:80]}"[:100],
+                value=str(i),
+                description=dt.strftime("%m/%d/%Y %H:%M")[:100],
+            ))
+        if not opts:
+            opts = [discord.SelectOption(label="(no events yet — use Add event)", value="none")]
+        super().__init__(placeholder="Pick an event to manage…", min_values=1, max_values=1, options=opts)
+
+    async def callback(self, interaction: discord.Interaction):
+        view = self.view
+        gid, cid = view.guild_id, view.channel_id
+        if self.values[0] == "none":
+            await interaction.response.defer()
+            return
+        g = get_guild_state(gid)
+        cs = get_channel_state(gid, cid)
+        sort_events(cs)
+        idx = int(self.values[0])
+        events = cs.get("events", [])
+        if idx >= len(events):
+            await interaction.response.edit_message(
+                embed=build_event_hub_embed(cs, g), view=EventHubView(gid, cid)
+            )
+            return
+        ev = events[idx]
+        await interaction.response.edit_message(
+            embed=build_event_detail_embed(cs, g, ev), view=EventDetailView(gid, cid, ev)
+        )
+
+
+class EventAddModal(discord.ui.Modal):
+    def __init__(self, gid: int, cid: int, parent: discord.Interaction):
+        super().__init__(title="Add event")
+        self.gid, self.cid, self.parent = gid, cid, parent
+        self.date = discord.ui.TextInput(label="Date (MM/DD/YYYY)", placeholder="04/12/2026", max_length=10)
+        self.time = discord.ui.TextInput(label="Time (24-hour HH:MM)", placeholder="09:00", max_length=5)
+        self.name = discord.ui.TextInput(label="Event name", max_length=200)
+        self.add_item(self.date)
+        self.add_item(self.time)
+        self.add_item(self.name)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        g = get_guild_state(self.gid)
+        cs = get_channel_state(self.gid, self.cid)
+        guild = bot.get_guild(self.gid)
+        member = guild.get_member(interaction.user.id) if guild else None
+        msg, _nudge = await add_event_core(
+            guild, g, cs, self.cid,
+            actor=interaction.user, member=member,
+            date=str(self.date.value).strip(), time=str(self.time.value).strip(),
+            name=str(self.name.value).strip(),
+        )
+        await interaction.response.send_message(msg, ephemeral=True)
+        try:
+            await self.parent.edit_original_response(
+                embed=build_event_hub_embed(cs, g), view=EventHubView(self.gid, self.cid)
+            )
+        except Exception:
+            pass
+
+
+class EventAddButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="Add event", emoji="➕", style=discord.ButtonStyle.success, row=1)
+
+    async def callback(self, interaction: discord.Interaction):
+        view = self.view
+        await interaction.response.send_modal(EventAddModal(view.guild_id, view.channel_id, interaction))
+
+
+class EventHubView(discord.ui.View):
+    def __init__(self, guild_id: int, channel_id: int):
+        super().__init__(timeout=300)
+        self.guild_id = guild_id
+        self.channel_id = channel_id
+        self.add_item(EventListSelect(get_channel_state(guild_id, channel_id)))
+        self.add_item(EventAddButton())
+
+
+# ---- detail sub-flows ----
+
+class EventEditModal(discord.ui.Modal):
+    def __init__(self, gid: int, cid: int, ev: dict, parent: discord.Interaction):
+        super().__init__(title="Edit event")
+        self.gid, self.cid, self.ev, self.parent = gid, cid, ev, parent
+        tz = get_guild_timezone(get_channel_state(gid, cid))
+        cur = _event_dt(ev, tz)
+        self.name = discord.ui.TextInput(label="Name", required=False, max_length=200, default=ev.get("name") or None)
+        self.date = discord.ui.TextInput(label="Date (MM/DD/YYYY)", required=False, max_length=10, default=cur.strftime("%m/%d/%Y"))
+        self.time = discord.ui.TextInput(label="Time (24-hour HH:MM)", required=False, max_length=5, default=cur.strftime("%H:%M"))
+        self.add_item(self.name)
+        self.add_item(self.date)
+        self.add_item(self.time)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        cs = get_channel_state(self.gid, self.cid)
+        tz = get_guild_timezone(cs)
+        ev = self.ev
+        name = str(self.name.value or "").strip()
+        if name:
+            ev["name"] = name
+        date = str(self.date.value or "").strip()
+        time = str(self.time.value or "").strip()
+        if date or time:
+            cur = _event_dt(ev, tz)
+            new_date = date or cur.strftime("%m/%d/%Y")
+            new_time = time or cur.strftime("%H:%M")
+            try:
+                dt = datetime.strptime(f"{new_date} {new_time}", "%m/%d/%Y %H:%M").replace(tzinfo=tz)
+            except ValueError:
+                await interaction.response.send_message("Invalid date/time. Use MM/DD/YYYY + 24-hour HH:MM.", ephemeral=True)
+                return
+            if dt <= datetime.now(tz):
+                await interaction.response.send_message("That date/time is in the past. Choose a future time.", ephemeral=True)
+                return
+            ev["timestamp"] = int(dt.timestamp())
+            ev["announced_milestones"] = []
+            ev["announced_repeat_dates"] = []
+        sort_events(cs)
+        save_state()
+        await interaction.response.send_message("✅ Event updated.", ephemeral=True)
+        await _event_apply_via_parent(self.parent, self.gid, self.cid, ev, confirm="✅ Event updated.")
+
+
+class EventMilestonesModal(discord.ui.Modal):
+    def __init__(self, gid: int, cid: int, ev: dict, parent: discord.Interaction):
+        super().__init__(title="Set milestone days")
+        self.gid, self.cid, self.ev, self.parent = gid, cid, ev, parent
+        self.days = discord.ui.TextInput(
+            label="Milestone days",
+            placeholder="100, 50, 30, 14, 7, 2, 1, 0",
+            default=", ".join(str(x) for x in ev.get("milestones", DEFAULT_MILESTONES)),
+            max_length=200,
+        )
+        self.add_item(self.days)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        parsed = parse_milestones(str(self.days.value or ""))
+        if parsed is None:
+            await interaction.response.send_message(
+                "Couldn't parse those. Use whole numbers 0–5000, e.g. `100, 50, 30, 7, 1, 0`.", ephemeral=True
+            )
+            return
+        self.ev["milestones"] = parsed
+        self.ev["announced_milestones"] = []
+        save_state()
+        await interaction.response.send_message("✅ Milestones updated.", ephemeral=True)
+        await _event_apply_via_parent(self.parent, self.gid, self.cid, self.ev,
+                                      confirm=f"✅ Milestones set to: {', '.join(str(x) for x in parsed)}")
+
+
+class EventMilestonesSetButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="Set custom", emoji="🔔", style=discord.ButtonStyle.primary, row=0)
+
+    async def callback(self, interaction: discord.Interaction):
+        v = self.view
+        await interaction.response.send_modal(EventMilestonesModal(v.guild_id, v.channel_id, v.ev, interaction))
+
+
+class EventMilestonesResetButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="Reset to default", emoji="↩️", style=discord.ButtonStyle.secondary, row=0)
+
+    async def callback(self, interaction: discord.Interaction):
+        v = self.view
+        cs = get_channel_state(v.guild_id, v.channel_id)
+        defaults = cs.get("default_milestones")
+        if not isinstance(defaults, list) or not defaults:
+            defaults = DEFAULT_MILESTONES
+        v.ev["milestones"] = list(defaults)
+        v.ev["announced_milestones"] = []
+        save_state()
+        await _event_apply(interaction, v.guild_id, v.channel_id, v.ev,
+                           confirm=f"✅ Milestones reset to defaults: {', '.join(str(x) for x in defaults)}")
+
+
+class EventMilestonesView(discord.ui.View):
+    def __init__(self, gid, cid, ev):
+        super().__init__(timeout=300)
+        self.guild_id, self.channel_id, self.ev = gid, cid, ev
+        self.add_item(EventMilestonesSetButton())
+        self.add_item(EventMilestonesResetButton())
+        self.add_item(EventDetailBackButton())
+
+
+class EventReminderModal(discord.ui.Modal):
+    def __init__(self, gid, cid, ev, parent):
+        super().__init__(title="Set reminder time")
+        self.gid, self.cid, self.ev, self.parent = gid, cid, ev, parent
+        self.time = discord.ui.TextInput(label="Reminder time (24-hour HH:MM)", placeholder="09:00",
+                                         default=ev.get("reminder_time") or None, max_length=5)
+        self.add_item(self.time)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        raw = str(self.time.value or "").strip()
+        if not validate_time_format(raw):
+            await interaction.response.send_message("Invalid time. Use 24-hour `HH:MM`, e.g. `09:00`.", ephemeral=True)
+            return
+        self.ev["reminder_time"] = raw
+        save_state()
+        await interaction.response.send_message(f"✅ Reminder time set to {raw}.", ephemeral=True)
+        await _event_apply_via_parent(self.parent, self.gid, self.cid, self.ev, confirm=f"✅ Reminder time set to **{raw}**.")
+
+
+class EventReminderSetButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="Set time", emoji="🕐", style=discord.ButtonStyle.primary, row=0)
+
+    async def callback(self, interaction: discord.Interaction):
+        v = self.view
+        await interaction.response.send_modal(EventReminderModal(v.guild_id, v.channel_id, v.ev, interaction))
+
+
+class EventReminderClearButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="Clear (use event time)", emoji="🚫", style=discord.ButtonStyle.secondary, row=0)
+
+    async def callback(self, interaction: discord.Interaction):
+        v = self.view
+        v.ev["reminder_time"] = None
+        save_state()
+        await _event_apply(interaction, v.guild_id, v.channel_id, v.ev, confirm="✅ Reminder time cleared (using event time).")
+
+
+class EventReminderView(discord.ui.View):
+    def __init__(self, gid, cid, ev):
+        super().__init__(timeout=300)
+        self.guild_id, self.channel_id, self.ev = gid, cid, ev
+        self.add_item(EventReminderSetButton())
+        self.add_item(EventReminderClearButton())
+        self.add_item(EventDetailBackButton())
+
+
+class EventOwnerSelect(discord.ui.UserSelect):
+    def __init__(self):
+        super().__init__(placeholder="Pick an event owner…", min_values=1, max_values=1)
+
+    async def callback(self, interaction: discord.Interaction):
+        v = self.view
+        user = self.values[0]
+        v.ev["owner_user_id"] = int(user.id)
+        v.ev["owner_name"] = getattr(user, "display_name", None) or user.name
+        save_state()
+        note = "" if v.ev.get("dm_opt_in") else " (turn on Owner DMs to actually DM them)"
+        await _event_apply(interaction, v.guild_id, v.channel_id, v.ev,
+                           confirm=f"✅ Owner set to {user.mention}.{note}")
+
+
+class EventOwnerClearButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="Clear owner", emoji="🚫", style=discord.ButtonStyle.secondary, row=1)
+
+    async def callback(self, interaction: discord.Interaction):
+        v = self.view
+        v.ev["owner_user_id"] = None
+        v.ev["owner_name"] = None
+        save_state()
+        await _event_apply(interaction, v.guild_id, v.channel_id, v.ev, confirm="✅ Owner cleared.")
+
+
+class EventOwnerView(discord.ui.View):
+    def __init__(self, gid, cid, ev):
+        super().__init__(timeout=300)
+        self.guild_id, self.channel_id, self.ev = gid, cid, ev
+        self.add_item(EventOwnerSelect())
+        self.add_item(EventOwnerClearButton())
+        self.add_item(EventDetailBackButton())
+
+
+class EventBannerModal(discord.ui.Modal):
+    def __init__(self, gid, cid, ev, parent):
+        super().__init__(title="Set banner image")
+        self.gid, self.cid, self.ev, self.parent = gid, cid, ev, parent
+        self.url = discord.ui.TextInput(label="Image URL (https://…)", default=ev.get("banner_url") or None, max_length=500)
+        self.add_item(self.url)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        u = _clean_url(str(self.url.value or ""))
+        if not (u.startswith("https://") or u.startswith("http://")):
+            await interaction.response.send_message("Banner URL must start with http:// or https://", ephemeral=True)
+            return
+        self.ev["banner_url"] = u
+        save_state()
+        await interaction.response.send_message("✅ Banner set.", ephemeral=True)
+        await _event_apply_via_parent(self.parent, self.gid, self.cid, self.ev, confirm="✅ Banner set.")
+
+
+class EventBannerSetButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="Set banner", emoji="🖼️", style=discord.ButtonStyle.primary, row=0)
+
+    async def callback(self, interaction: discord.Interaction):
+        v = self.view
+        await interaction.response.send_modal(EventBannerModal(v.guild_id, v.channel_id, v.ev, interaction))
+
+
+class EventBannerClearButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="Clear banner", emoji="🚫", style=discord.ButtonStyle.secondary, row=0)
+
+    async def callback(self, interaction: discord.Interaction):
+        v = self.view
+        v.ev["banner_url"] = None
+        save_state()
+        await _event_apply(interaction, v.guild_id, v.channel_id, v.ev, confirm="✅ Banner cleared.")
+
+
+class EventBannerView(discord.ui.View):
+    def __init__(self, gid, cid, ev):
+        super().__init__(timeout=300)
+        self.guild_id, self.channel_id, self.ev = gid, cid, ev
+        self.add_item(EventBannerSetButton())
+        self.add_item(EventBannerClearButton())
+        self.add_item(EventDetailBackButton())
+
+
+class EventRepeatModal(discord.ui.Modal):
+    def __init__(self, gid, cid, ev, parent):
+        super().__init__(title="Set repeat interval")
+        self.gid, self.cid, self.ev, self.parent = gid, cid, ev, parent
+        cur = ev.get("repeat_every_days")
+        self.days = discord.ui.TextInput(label="Repeat every N days (1–365)", placeholder="7",
+                                         default=str(cur) if cur else None, max_length=3)
+        self.add_item(self.days)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            n = int(str(self.days.value or "").strip())
+        except ValueError:
+            await interaction.response.send_message("Enter a whole number of days (1–365).", ephemeral=True)
+            return
+        if n < 1 or n > 365:
+            await interaction.response.send_message("Repeat interval must be between 1 and 365 days.", ephemeral=True)
+            return
+        cs = get_channel_state(self.gid, self.cid)
+        self.ev["repeat_every_days"] = n
+        self.ev["repeat_anchor_date"] = _today_local_date(get_guild_timezone(cs)).isoformat()
+        self.ev["announced_repeat_dates"] = []
+        save_state()
+        await interaction.response.send_message(f"✅ Repeating every {n} day(s).", ephemeral=True)
+        await _event_apply_via_parent(self.parent, self.gid, self.cid, self.ev, confirm=f"✅ Repeating every {n} day(s).")
+
+
+class EventRepeatSetButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="Set repeat", emoji="🔁", style=discord.ButtonStyle.primary, row=0)
+
+    async def callback(self, interaction: discord.Interaction):
+        v = self.view
+        await interaction.response.send_modal(EventRepeatModal(v.guild_id, v.channel_id, v.ev, interaction))
+
+
+class EventRepeatClearButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="Turn off repeat", emoji="🚫", style=discord.ButtonStyle.secondary, row=0)
+
+    async def callback(self, interaction: discord.Interaction):
+        v = self.view
+        v.ev["repeat_every_days"] = None
+        v.ev["repeat_anchor_date"] = None
+        v.ev["announced_repeat_dates"] = []
+        save_state()
+        await _event_apply(interaction, v.guild_id, v.channel_id, v.ev, confirm="✅ Repeating reminders turned off.")
+
+
+class EventRepeatView(discord.ui.View):
+    def __init__(self, gid, cid, ev):
+        super().__init__(timeout=300)
+        self.guild_id, self.channel_id, self.ev = gid, cid, ev
+        self.add_item(EventRepeatSetButton())
+        self.add_item(EventRepeatClearButton())
+        self.add_item(EventDetailBackButton())
+
+
+class EventDupeModal(discord.ui.Modal):
+    def __init__(self, gid, cid, ev, parent):
+        super().__init__(title="Duplicate event")
+        self.gid, self.cid, self.ev, self.parent = gid, cid, ev, parent
+        tz = get_guild_timezone(get_channel_state(gid, cid))
+        cur = _event_dt(ev, tz)
+        self.date = discord.ui.TextInput(label="New date (MM/DD/YYYY)", placeholder="04/12/2026", max_length=10)
+        self.time = discord.ui.TextInput(label="New time (HH:MM, blank = same)", required=False, max_length=5,
+                                         default=cur.strftime("%H:%M"))
+        self.name = discord.ui.TextInput(label="New name (blank = same)", required=False, max_length=200,
+                                         default=ev.get("name") or None)
+        self.add_item(self.date)
+        self.add_item(self.time)
+        self.add_item(self.name)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        cs = get_channel_state(self.gid, self.cid)
+        g = get_guild_state(self.gid)
+        tz = get_guild_timezone(cs)
+        src = self.ev
+        use_time = str(self.time.value or "").strip() or _event_dt(src, tz).strftime("%H:%M")
+        use_name = str(self.name.value or "").strip() or src.get("name", "Event")
+        try:
+            dt = datetime.strptime(f"{str(self.date.value).strip()} {use_time}", "%m/%d/%Y %H:%M").replace(tzinfo=tz)
+        except ValueError:
+            await interaction.response.send_message("Invalid date/time. Use MM/DD/YYYY + 24-hour HH:MM.", ephemeral=True)
+            return
+        if dt <= datetime.now(tz):
+            await interaction.response.send_message("That date/time is in the past. Choose a future time.", ephemeral=True)
+            return
+        guild = bot.get_guild(self.gid)
+        maker = guild.get_member(interaction.user.id) if guild else None
+        maker_name = getattr(maker, "display_name", None) or interaction.user.name
+        new_ev = {
+            "name": use_name,
+            "timestamp": int(dt.timestamp()),
+            "milestones": (src.get("milestones") or DEFAULT_MILESTONES).copy(),
+            "announced_milestones": [],
+            "repeat_every_days": src.get("repeat_every_days"),
+            "repeat_anchor_date": None,
+            "announced_repeat_dates": [],
+            "silenced": src.get("silenced", False),
+            "dm_opt_in": False,
+            "start_announced": False,
+            "banner_url": src.get("banner_url"),
+            "created_by_user_id": int(interaction.user.id),
+            "created_by_name": maker_name,
+            "owner_user_id": int(interaction.user.id),
+            "owner_name": maker_name,
+        }
+        cs["events"].append(new_ev)
+        sort_events(cs)
+        save_state()
+        await _countdown_refresh_pin(self.gid, self.cid)
+        await interaction.response.send_message(f"🧬 Duplicated → **{use_name}** on {dt.strftime('%B %d, %Y at %I:%M %p %Z')}.", ephemeral=True)
+        try:
+            await self.parent.edit_original_response(embed=build_event_hub_embed(cs, g), view=EventHubView(self.gid, self.cid))
+        except Exception:
+            pass
+
+
+class EventDeleteConfirmButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="Yes, delete this event", emoji="🗑️", style=discord.ButtonStyle.danger, row=0)
+
+    async def callback(self, interaction: discord.Interaction):
+        v = self.view
+        cs = get_channel_state(v.guild_id, v.channel_id)
+        g = get_guild_state(v.guild_id)
+        try:
+            cs["events"].remove(v.ev)
+        except ValueError:
+            pass
+        save_state()
+        await _countdown_refresh_pin(v.guild_id, v.channel_id)
+        await interaction.response.edit_message(
+            embed=build_event_hub_embed(cs, g), view=EventHubView(v.guild_id, v.channel_id)
+        )
+
+
+class EventDeleteView(discord.ui.View):
+    def __init__(self, gid, cid, ev):
+        super().__init__(timeout=120)
+        self.guild_id, self.channel_id, self.ev = gid, cid, ev
+        self.add_item(EventDeleteConfirmButton())
+        self.add_item(EventDetailBackButton())
+
+
+class EventActionSelect(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label="Edit name / date / time", value="edit", emoji="✏️"),
+            discord.SelectOption(label="Milestones", value="milestones", emoji="🔔"),
+            discord.SelectOption(label="Reminder time", value="reminder", emoji="🕐"),
+            discord.SelectOption(label="Owner", value="owner", emoji="👤"),
+            discord.SelectOption(label="Owner DMs (toggle)", value="dmtoggle", emoji="📨"),
+            discord.SelectOption(label="Silence (toggle)", value="silence", emoji="🔕"),
+            discord.SelectOption(label="Banner (Supporter)", value="banner", emoji="🖼️"),
+            discord.SelectOption(label="Repeat (Pro)", value="repeat", emoji="🔁"),
+            discord.SelectOption(label="Duplicate (Pro)", value="dupe", emoji="🧬"),
+            discord.SelectOption(label="Delete event", value="delete", emoji="🗑️"),
+        ]
+        super().__init__(placeholder="Choose an action…", min_values=1, max_values=1, options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        v = self.view
+        gid, cid, ev = v.guild_id, v.channel_id, v.ev
+        g = get_guild_state(gid)
+        choice = self.values[0]
+
+        if choice == "edit":
+            await interaction.response.send_modal(EventEditModal(gid, cid, ev, interaction))
+        elif choice == "milestones":
+            await interaction.response.edit_message(
+                embed=discord.Embed(title="🔔 Milestones",
+                                    description="Set custom milestone days, or reset to the channel default.",
+                                    color=EMBED_COLOR),
+                view=EventMilestonesView(gid, cid, ev))
+        elif choice == "reminder":
+            await interaction.response.edit_message(
+                embed=discord.Embed(title="🕐 Reminder time",
+                                    description="The final day-of reminder fires at this time instead of the event time.",
+                                    color=EMBED_COLOR),
+                view=EventReminderView(gid, cid, ev))
+        elif choice == "owner":
+            await interaction.response.edit_message(
+                embed=discord.Embed(title="👤 Event owner",
+                                    description="Pick who owns this event. They receive DMs only if Owner DMs is on.",
+                                    color=EMBED_COLOR),
+                view=EventOwnerView(gid, cid, ev))
+        elif choice == "dmtoggle":
+            ev["dm_opt_in"] = not bool(ev.get("dm_opt_in"))
+            save_state()
+            if ev["dm_opt_in"] and not ev.get("owner_user_id"):
+                note = "✅ Owner DMs **on** — set an owner so there's someone to DM."
+            else:
+                note = "✅ Owner DMs **on**." if ev["dm_opt_in"] else "🔕 Owner DMs **off**."
+            await _event_apply(interaction, gid, cid, ev, confirm=note)
+        elif choice == "silence":
+            ev["silenced"] = not bool(ev.get("silenced"))
+            save_state()
+            await _event_apply(interaction, gid, cid, ev,
+                               confirm=("🔕 Reminders silenced." if ev["silenced"] else "🔔 Reminders re-enabled."))
+        elif choice == "banner":
+            if not (is_pro(g) or await topgg_has_voted(interaction.user.id, force=True)):
+                await send_vote_required(interaction, feature_label="event banners")
+                return
+            await interaction.response.edit_message(
+                embed=discord.Embed(title="🖼️ Banner",
+                                    description="Set or clear this event's banner image.", color=EMBED_COLOR),
+                view=EventBannerView(gid, cid, ev))
+        elif choice == "repeat":
+            if not is_pro(g):
+                await interaction.response.send_message(
+                    "💎 Recurring reminders are a **Chromie Pro** feature ($2.99/mo). Subscribe via Discord Server Subscription.",
+                    ephemeral=True)
+                return
+            await interaction.response.edit_message(
+                embed=discord.Embed(title="🔁 Repeat", description="Set or turn off recurring reminders.", color=EMBED_COLOR),
+                view=EventRepeatView(gid, cid, ev))
+        elif choice == "dupe":
+            if not is_pro(g):
+                await interaction.response.send_message(
+                    "💎 Duplicating events is a **Chromie Pro** feature ($2.99/mo). Subscribe via Discord Server Subscription.",
+                    ephemeral=True)
+                return
+            await interaction.response.send_modal(EventDupeModal(gid, cid, ev, interaction))
+        elif choice == "delete":
+            await interaction.response.edit_message(
+                embed=discord.Embed(title="🗑️ Delete this event?",
+                                    description=f"**{str(ev.get('name', 'Event'))[:240]}** will be permanently removed.",
+                                    color=discord.Color.red()),
+                view=EventDeleteView(gid, cid, ev))
+
+
+class EventDetailView(discord.ui.View):
+    def __init__(self, guild_id: int, channel_id: int, ev: dict):
+        super().__init__(timeout=300)
+        self.guild_id = guild_id
+        self.channel_id = channel_id
+        self.ev = ev
+        self.add_item(EventActionSelect())
+        self.add_item(EventBackToListButton())
+
+
+@bot.tree.command(name="event", description="Add and manage this channel's events (edit, milestones, owner, repeat, …).")
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.checks.has_permissions(manage_guild=True)
+@app_commands.guild_only()
+async def event_hub(interaction: discord.Interaction):
+    guild = interaction.guild
+    assert guild is not None
+    g = get_guild_state(guild.id)
+    cid, cs = resolve_event_channel(g, interaction.channel_id)
+    if cs is None:
+        await interaction.response.send_message(no_channel_guidance(g, "/event"), ephemeral=True)
+        return
+    await interaction.response.send_message(
+        embed=build_event_hub_embed(cs, g), view=EventHubView(guild.id, cid), ephemeral=True
+    )
+
+
+async def add_event_core(guild, guild_state, cs, cid, *, actor, member, date, time, name):
+    """Validate the tier limit + date, append the event to the channel bucket, and
+    rebuild that channel's pin. Returns (message:str, nudge:bool). Shared by the
+    top-level /addevent command and the /event hub's Add button so both enforce
+    the same per-channel Free/Supporter/Pro limits."""
+    tz = get_guild_timezone(cs)
+
+    # EVENT LIMIT ENFORCEMENT (per countdown channel) — only count FUTURE events.
+    now = datetime.now(tz)
+    future_events = [
+        ev for ev in cs.get("events", [])
+        if datetime.fromtimestamp(ev.get("timestamp", 0), tz=tz) > now
+    ]
+    current_event_count = len(future_events)
+
+    is_pro_guild = is_pro(guild_state)
+    has_voted = await topgg_has_voted(actor.id, force=True)
+
+    if has_voted:
+        nowu = datetime.now(timezone.utc)
+        sup = guild_state.setdefault("supporter", {})
+        sup["last_vote_at"] = nowu.isoformat()
+        sup["vote_until"] = (nowu + timedelta(hours=12)).isoformat()
+        save_state()
+
+    if is_pro_guild:
+        event_limit, tier_name = None, "Chromie Pro"
+    elif has_voted:
+        event_limit, tier_name = 5, "Supporter"
+    else:
+        event_limit, tier_name = 3, "Free"
+
+    if event_limit is not None and current_event_count >= event_limit:
+        if tier_name == "Free":
+            return (
+                f"❌ **Event limit reached!**\n\n"
+                f"You have **{current_event_count}/{event_limit} events** (Free tier limit).\n\n"
+                f"**Upgrade options:**\n"
+                f"• 🗳️ **Vote on Top.gg** → Get 5 events (resets every 12 hours)\n"
+                f"  Use `/vote` to get the link!\n"
+                f"• 💎 **Chromie Pro** → Unlimited events + premium features\n\n"
+                f"Or delete an event with `/removeevent` first."
+            ), False
+        return (
+            f"❌ **Event limit reached!**\n\n"
+            f"You have **{current_event_count}/{event_limit} events** (Supporter tier limit).\n\n"
+            f"**Upgrade to Chromie Pro for:**\n"
+            f"• ♾️ Unlimited events\n"
+            f"• 💎 Premium features\n"
+            f"• 🎨 Advanced customization\n\n"
+            f"Or delete an event with `/removeevent` first."
+        ), False
+
+    try:
+        dt = datetime.strptime(f"{date} {time}", "%m/%d/%Y %H:%M").replace(tzinfo=tz)
+    except ValueError:
+        return ("I couldn't understand that date/time.\nUse: `date: 04/12/2026` `time: 09:00` (MM/DD/YYYY + 24-hour HH:MM).", False)
+
+    if dt <= datetime.now(tz):
+        return ("That date/time is in the past. Please choose a future time.", False)
+
+    creator_display = getattr(member, "display_name", None) or actor.name
+
+    event = {
+        "name": name,
+        "timestamp": int(dt.timestamp()),
+        "owner_id": actor.id,
+        "owner_tag": str(actor),
+        "milestones": cs.get("default_milestones", DEFAULT_MILESTONES.copy()).copy(),
+        "announced_milestones": [],
+        "milestone_messages": [],
+        "milestones_cleaned": False,
+        "repeat_every_days": None,
+        "repeat_anchor_date": None,
+        "announced_repeat_dates": [],
+        "silenced": False,
+        "dm_opt_in": False,  # owner DMs opt-in, default off (toggle in /event)
+        "created_by_user_id": int(actor.id),
+        "created_by_name": creator_display,
+        "owner_user_id": int(actor.id),
+        "owner_name": creator_display,
+        "banner_url": None,
+        "start_announced": False,
+    }
+
+    cs["events"].append(event)
+    sort_events(cs)
+    save_state()
+
+    channel = await get_text_channel(cid)
+    if channel is not None:
+        await rebuild_pinned_message_for_channel(channel, cs, guild_state)
+
+    msg = (
+        f"✅ Added event **{name}** on {dt.strftime('%B %d, %Y at %I:%M %p %Z')} in server **{guild.name}**.\n"
+        f"• {tier_name}: {len(cs['events'])}/{event_limit if event_limit else '∞'} events"
+    )
+    nudge = tier_name == "Free" and len(cs["events"]) >= 2
+    return msg, nudge
+
+
 @bot.tree.command(name="addevent", description="Add a new event to the countdown.")
 @app_commands.describe(
     date="Date in MM/DD/YYYY format",
@@ -4281,124 +5067,12 @@ async def addevent(interaction: discord.Interaction, date: str, time: str, name:
         await interaction.edit_original_response(content=msg)
         return
 
-    tz = get_guild_timezone(cs)
-
-    # EVENT LIMIT ENFORCEMENT (from spec) — counted per countdown channel.
-    # Only count FUTURE events, not past ones
-    now = datetime.now(tz)
-    all_events = cs.get("events", [])
-    future_events = [
-        ev for ev in all_events 
-        if datetime.fromtimestamp(ev.get("timestamp", 0), tz=tz) > now
-    ]
-    current_event_count = len(future_events)
-    
-    # Determine user tier and limits
-    is_pro_guild = is_pro(guild_state)
-    has_voted = await topgg_has_voted(interaction.user.id, force=True)
-    
-    if has_voted:
-        # Update guild supporter status if they voted
-        now = datetime.now(timezone.utc)
-        vote_until = now + timedelta(hours=12)
-        if "supporter" not in guild_state:
-            guild_state["supporter"] = {}
-        guild_state["supporter"]["last_vote_at"] = now.isoformat()
-        guild_state["supporter"]["vote_until"] = vote_until.isoformat()
-        save_state()
-    
-    # Determine limits: Free=3, Supporter=5, Pro=unlimited
-    if is_pro_guild:
-        event_limit = None  # Unlimited for Pro
-        tier_name = "Chromie Pro"
-    elif has_voted:
-        event_limit = 5
-        tier_name = "Supporter"
-    else:
-        event_limit = 3
-        tier_name = "Free"
-    
-    # Check if limit exceeded
-    if event_limit is not None and current_event_count >= event_limit:
-        if tier_name == "Free":
-            msg = (
-                f"❌ **Event limit reached!**\n\n"
-                f"You have **{current_event_count}/{event_limit} events** (Free tier limit).\n\n"
-                f"**Upgrade options:**\n"
-                f"• 🗳️ **Vote on Top.gg** → Get 5 events (resets every 12 hours)\n"
-                f"  Use `/vote` to get the link!\n"
-                f"• 💎 **Chromie Pro** → Unlimited events + premium features\n\n"
-                f"Or delete an event with `/removeevent` first."
-            )
-        else:  # Supporter at 5/5
-            msg = (
-                f"❌ **Event limit reached!**\n\n"
-                f"You have **{current_event_count}/{event_limit} events** (Supporter tier limit).\n\n"
-                f"**Upgrade to Chromie Pro for:**\n"
-                f"• ♾️ Unlimited events\n"
-                f"• 💎 Premium features\n"
-                f"• 🎨 Advanced customization\n\n"
-                f"Or delete an event with `/removeevent` first."
-            )
-        await interaction.edit_original_response(content=msg)
-        return
-
-    try:
-        dt = datetime.strptime(f"{date} {time}", "%m/%d/%Y %H:%M")
-    except ValueError:
-        await interaction.edit_original_response(
-            content="I couldn't understand that date/time.\nUse: `date: 04/12/2026` `time: 09:00` (MM/DD/YYYY + 24-hour HH:MM)."
-        )
-        return
-
-    dt = dt.replace(tzinfo=tz)
-
-    if dt <= datetime.now(tz):
-        await interaction.edit_original_response(
-            content="That date/time is in the past. Please choose a future time."
-        )
-        return
-
-    # display name for creator/owner (use the resolved member you already fetched)
-    creator_display = getattr(member, "display_name", None) or interaction.user.name
-
-    event = {
-        "name": name,
-        "timestamp": int(dt.timestamp()),
-        "owner_id": interaction.user.id,
-        "owner_tag": str(interaction.user),
-        "milestones": cs.get("default_milestones", DEFAULT_MILESTONES.copy()).copy(),
-        "announced_milestones": [],
-        "milestone_messages": [],     # ✅ store messages we sent
-        "milestones_cleaned": False,  # ✅ prevents repeat attempts
-        "repeat_every_days": None,
-        "repeat_anchor_date": None,
-        "announced_repeat_dates": [],
-        "silenced": False,
-
-        "created_by_user_id": int(user.id),
-        "created_by_name": creator_display,
-
-        "owner_user_id": int(user.id),
-        "owner_name": creator_display,
-        "banner_url": None,
-        "start_announced": False,
-        "banner_url": None,
-    }
-
-    cs["events"].append(event)
-    sort_events(cs)
-    save_state()
-
-    channel = await get_text_channel(cid)
-    if channel is not None:
-        await rebuild_pinned_message_for_channel(channel, cs, guild_state)
-
-    await interaction.edit_original_response(
-        content=f"✅ Added event **{name}** on {dt.strftime('%B %d, %Y at %I:%M %p %Z')} in server **{guild.name}**.\n• {tier_name}: {len(cs['events'])}/{event_limit if event_limit else '∞'} events"
+    msg, nudge = await add_event_core(
+        guild, guild_state, cs, cid,
+        actor=interaction.user, member=member, date=date, time=time, name=name,
     )
-    # Only nudge free users who are approaching limit
-    if tier_name == "Free" and len(cs["events"]) >= 2:
+    await interaction.edit_original_response(content=msg)
+    if nudge:
         await maybe_vote_nudge(interaction, "Event scheduled! Vote on Top.gg to unlock 5 events.")
 
 
