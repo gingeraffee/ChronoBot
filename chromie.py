@@ -3737,137 +3737,465 @@ async def linkserver(interaction: discord.Interaction):
         ephemeral=True,
     )
 
-digest_group = app_commands.Group(name="digest", description="Weekly event digest")
-bot.tree.add_command(digest_group)
-
-@digest_group.command(name="enable", description="[Pro] Enable the weekly digest.")
-@require_pro("Weekly Digest")
-@require_vote("/digest enable")
-@app_commands.checks.has_permissions(manage_guild=True)
-@app_commands.guild_only()
-async def digest_enable_cmd(interaction: discord.Interaction):
-    guild = interaction.guild
-    assert guild is not None
-
-    g = get_guild_state(guild.id)
-    d = g.setdefault("digest", {"enabled": False, "channel_id": None, "last_sent_date": None})
-
-    ch_id = g.get("event_channel_id") or interaction.channel_id
-    d["enabled"] = True
-    d["channel_id"] = int(ch_id)
-    save_state()
-
-    await interaction.response.send_message("✅ Weekly digest enabled.", ephemeral=True)
-
-
-@digest_group.command(name="disable", description="Disable the weekly digest.")
-@app_commands.checks.has_permissions(manage_guild=True)
-@app_commands.guild_only()
-async def digest_disable_cmd(interaction: discord.Interaction):
-    guild = interaction.guild
-    assert guild is not None
-
-    g = get_guild_state(guild.id)
-    d = g.setdefault("digest", {"enabled": False, "channel_id": None, "last_sent_date": None})
-    d["enabled"] = False
-    save_state()
-
-    await interaction.response.send_message("🛑 Weekly digest disabled.", ephemeral=True)
-
 # ==========================
-# COUNTDOWN TITLE/DESCRIPTION (Supporter perk)
+# /countdown HUB — per-channel countdown settings (Select + Modal/Buttons)
 # ==========================
+# Replaces the old /countdown title|description group, /digest, /theme,
+# /timeformat, /timezone_set|view, /setmentionrole|clearmentionrole and
+# /resetchannel. Everything edits the bucket for the countdown channel the
+# command is run in (resolved via resolve_event_channel).
 
-countdown_group = app_commands.Group(name="countdown", description="Customize the pinned countdown embed")
-bot.tree.add_command(countdown_group)
+_TIME_UNIT_LABELS = {
+    "discord": "Discord native (e.g. 'in 3 months')",
+    "days": "Days (e.g. '90 days')",
+    "weeks": "Weeks (e.g. '12 weeks')",
+    "detailed": "Detailed (e.g. '12 weeks and 6 days')",
+}
 
-@countdown_group.command(name="title", description="Set a custom title for the pinned countdown embed (Pro only).")
-@require_pro("/countdown title")
-@app_commands.checks.has_permissions(manage_guild=True)
-@app_commands.guild_only()
-@app_commands.describe(text="New title (max 256 characters). Use 'default' to clear.")
-async def countdown_title_cmd(interaction: discord.Interaction, text: str):
-    guild = interaction.guild
-    assert guild is not None
-    await interaction.response.defer(ephemeral=True)
 
-    g = get_guild_state(guild.id)
+def build_countdown_settings_embed(cs: dict, guild_state: dict, channel_id: int) -> discord.Embed:
+    """Render the current settings for one countdown channel."""
+    theme_id = normalize_theme_key(cs.get("theme"))
+    theme_label = _THEME_LABELS.get(theme_id, theme_id.title())
+    tz = cs.get("timezone") or "UTC"
+    unit = cs.get("time_unit", "discord")
+    role_id = cs.get("mention_role_id")
+    role_txt = f"<@&{int(role_id)}>" if role_id else "—"
+    title_ov = cs.get("countdown_title_override") or "— (theme default)"
+    desc_ov = cs.get("countdown_description_override")
+    if desc_ov:
+        desc_txt = (desc_ov[:80] + "…") if len(desc_ov) > 80 else desc_ov
+    else:
+        desc_txt = "—"
+    digest = cs.get("digest") or {}
+    digest_txt = "✅ On" if digest.get("enabled") else "🔕 Off"
+    pro = is_pro(guild_state)
+    lock = "" if pro else " 🔒"
 
-    raw = (text or "").strip()
-    if raw.lower() == "default":
-        g["countdown_title_override"] = None
+    e = discord.Embed(
+        title="⚙️ Countdown Settings",
+        description=f"Editing the countdown in <#{channel_id}>.\nPick a setting below to change it.",
+        color=EMBED_COLOR,
+    )
+    e.add_field(name="🎨 Theme", value=theme_label, inline=True)
+    e.add_field(name="🌍 Timezone", value=f"`{tz}`", inline=True)
+    e.add_field(name="⏱️ Time format", value=_TIME_UNIT_LABELS.get(unit, unit), inline=True)
+    e.add_field(name="🔔 Mention role", value=role_txt, inline=True)
+    e.add_field(name=f"📝 Title{lock}", value=title_ov, inline=True)
+    e.add_field(name=f"💬 Description{lock}", value=desc_txt, inline=True)
+    e.add_field(name=f"📊 Weekly digest{lock}", value=digest_txt, inline=True)
+    if not pro:
+        e.set_footer(text="🔒 = Chromie Pro ($2.99/mo). Free servers get 1 countdown channel.")
+    return e
+
+
+async def _countdown_refresh_pin(guild_id: int, channel_id: int) -> None:
+    """Best-effort: re-render the pinned countdown after a settings change."""
+    g = get_guild_state(guild_id)
+    cs = get_channel_state(guild_id, channel_id)
+    guild = bot.get_guild(guild_id)
+    ch = await get_text_channel(channel_id)
+    if guild and ch:
+        try:
+            await refresh_countdown_message_for_channel(guild, ch, cs, g)
+        except Exception:
+            pass
+
+
+def _countdown_hub_embed_with_note(guild_id: int, channel_id: int, note: str) -> discord.Embed:
+    g = get_guild_state(guild_id)
+    cs = get_channel_state(guild_id, channel_id)
+    embed = build_countdown_settings_embed(cs, g, channel_id)
+    embed.description = f"{note}\n\n{embed.description}"
+    return embed
+
+
+async def _countdown_apply(interaction: discord.Interaction, guild_id: int, channel_id: int, *, confirm: str):
+    """Component path: refresh pin + re-render the hub in place (edit_message)."""
+    await _countdown_refresh_pin(guild_id, channel_id)
+    embed = _countdown_hub_embed_with_note(guild_id, channel_id, confirm)
+    await interaction.response.edit_message(embed=embed, view=CountdownHubView(guild_id, channel_id))
+
+
+async def _countdown_apply_via_parent(parent: discord.Interaction, guild_id: int, channel_id: int, *, confirm: str):
+    """Modal path: refresh pin + re-render the hub on the parent component message."""
+    await _countdown_refresh_pin(guild_id, channel_id)
+    embed = _countdown_hub_embed_with_note(guild_id, channel_id, confirm)
+    try:
+        await parent.edit_original_response(embed=embed, view=CountdownHubView(guild_id, channel_id))
+    except Exception:
+        pass
+
+
+class CountdownBackButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="Back", emoji="⬅️", style=discord.ButtonStyle.secondary, row=1)
+
+    async def callback(self, interaction: discord.Interaction):
+        view = self.view
+        g = get_guild_state(view.guild_id)
+        cs = get_channel_state(view.guild_id, view.channel_id)
+        await interaction.response.edit_message(
+            embed=build_countdown_settings_embed(cs, g, view.channel_id),
+            view=CountdownHubView(view.guild_id, view.channel_id),
+        )
+
+
+class CountdownSubView(discord.ui.View):
+    """Generic wrapper: one sub-control (a Select) plus a Back button."""
+    def __init__(self, guild_id: int, channel_id: int, item: discord.ui.Item):
+        super().__init__(timeout=300)
+        self.guild_id = guild_id
+        self.channel_id = channel_id
+        self.add_item(item)
+        self.add_item(CountdownBackButton())
+
+
+class CountdownThemeSelect(discord.ui.Select):
+    def __init__(self, guild_state: dict):
+        unlocked = is_pro(guild_state) or has_active_vote_guild(guild_state)
+        options = []
+        for tid, label in _THEME_LABELS.items():
+            locked = bool(THEMES.get(tid, {}).get("supporter_only")) and not unlocked
+            options.append(discord.SelectOption(
+                label=label[:100],
+                value=tid,
+                description="🔒 Supporter / Pro" if locked else None,
+            ))
+        super().__init__(placeholder="Pick a theme…", min_values=1, max_values=1, options=options[:25])
+
+    async def callback(self, interaction: discord.Interaction):
+        view = self.view
+        gid, cid = view.guild_id, view.channel_id
+        g = get_guild_state(gid)
+        tid = normalize_theme_key(self.values[0])
+        if tid not in THEMES:
+            await interaction.response.send_message("Unknown theme.", ephemeral=True)
+            return
+        # Supporter themes need Pro or an active Top.gg vote from the caller.
+        if THEMES[tid].get("supporter_only") and not is_pro(g):
+            if not await topgg_has_voted(interaction.user.id, force=True):
+                await send_vote_required(interaction, feature_label=f"`{_THEME_LABELS.get(tid, tid)}` theme")
+                return
+        cs = get_channel_state(gid, cid)
+        cs["theme"] = tid
         save_state()
-        await refresh_countdown_message(guild, g)
-        await interaction.edit_original_response(content="✅ Countdown title reset to the theme default.")
-        return
-
-    g["countdown_title_override"] = raw[:256]
-    save_state()
-    await refresh_countdown_message(guild, g)
-    await interaction.edit_original_response(content=f"✅ Countdown title set to: **{g['countdown_title_override']}**")
+        await _countdown_apply(interaction, gid, cid, confirm=f"✅ Theme set to **{_THEME_LABELS.get(tid, tid)}**.")
 
 
-@countdown_group.command(name="cleartitle", description="Clear the custom countdown title (back to theme default).")
-@require_pro("/countdown cleartitle")
-@app_commands.checks.has_permissions(manage_guild=True)
-@app_commands.guild_only()
-async def countdown_cleartitle_cmd(interaction: discord.Interaction):
-    guild = interaction.guild
-    assert guild is not None
-    await interaction.response.defer(ephemeral=True)
+class CountdownTimeFormatSelect(discord.ui.Select):
+    def __init__(self):
+        options = [discord.SelectOption(label=lbl[:100], value=val) for val, lbl in _TIME_UNIT_LABELS.items()]
+        super().__init__(placeholder="Pick a time format…", min_values=1, max_values=1, options=options)
 
-    g = get_guild_state(guild.id)
-    g["countdown_title_override"] = None
-    save_state()
-
-    await refresh_countdown_message(guild, g)
-    await interaction.edit_original_response(content="✅ Countdown title cleared (using theme default).")
-
-
-@countdown_group.command(name="description", description="Set a custom intro/description shown above the event list (Pro only).")
-@require_pro("/countdown description")
-@app_commands.checks.has_permissions(manage_guild=True)
-@app_commands.guild_only()
-@app_commands.describe(text="Intro text shown above the list (max 1024 recommended). Use 'clear' to remove.")
-async def countdown_description_cmd(interaction: discord.Interaction, text: str):
-    guild = interaction.guild
-    assert guild is not None
-    await interaction.response.defer(ephemeral=True)
-
-    g = get_guild_state(guild.id)
-
-    raw = (text or "").strip()
-    if raw.lower() in ("clear", "none", "off"):
-        g["countdown_description_override"] = None
+    async def callback(self, interaction: discord.Interaction):
+        view = self.view
+        gid, cid = view.guild_id, view.channel_id
+        cs = get_channel_state(gid, cid)
+        cs["time_unit"] = self.values[0]
         save_state()
-        await refresh_countdown_message(guild, g)
-        await interaction.edit_original_response(content="✅ Countdown description cleared.")
-        return
-
-    # Keep it comfortably within embed limits.
-    # (Description total max is 4096; we prepend this above the list.)
-    g["countdown_description_override"] = raw[:1500]
-    save_state()
-
-    await refresh_countdown_message(guild, g)
-    await interaction.edit_original_response(content="✅ Countdown description updated.")
+        await _countdown_apply(interaction, gid, cid, confirm=f"✅ Time format set to **{_TIME_UNIT_LABELS[self.values[0]]}**.")
 
 
-@countdown_group.command(name="cleardescription", description="Clear the custom countdown description.")
-@require_pro("/countdown cleardescription")
+class CountdownRoleSelect(discord.ui.RoleSelect):
+    def __init__(self):
+        super().__init__(placeholder="Pick a role to mention…", min_values=1, max_values=1)
+
+    async def callback(self, interaction: discord.Interaction):
+        view = self.view
+        gid, cid = view.guild_id, view.channel_id
+        role = self.values[0]
+        if role.is_default():
+            await interaction.response.send_message(
+                "⚠️ You can't use **@everyone** as the mention role.\n"
+                "Give Chromie the **Mention Everyone** permission instead.",
+                ephemeral=True,
+            )
+            return
+        cs = get_channel_state(gid, cid)
+        cs["mention_role_id"] = int(role.id)
+        save_state()
+        await _countdown_apply(interaction, gid, cid, confirm=f"✅ Milestone reminders will mention {role.mention}.")
+
+
+class CountdownRoleClearButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="Clear role", emoji="🚫", style=discord.ButtonStyle.secondary, row=1)
+
+    async def callback(self, interaction: discord.Interaction):
+        view = self.view
+        gid, cid = view.guild_id, view.channel_id
+        cs = get_channel_state(gid, cid)
+        cs["mention_role_id"] = None
+        save_state()
+        await _countdown_apply(interaction, gid, cid, confirm="✅ Mention role cleared.")
+
+
+class CountdownRoleView(discord.ui.View):
+    def __init__(self, guild_id: int, channel_id: int):
+        super().__init__(timeout=300)
+        self.guild_id = guild_id
+        self.channel_id = channel_id
+        self.add_item(CountdownRoleSelect())
+        self.add_item(CountdownRoleClearButton())
+        self.add_item(CountdownBackButton())
+
+
+class CountdownTimezoneModal(discord.ui.Modal):
+    def __init__(self, guild_id: int, channel_id: int, parent: discord.Interaction):
+        super().__init__(title="Set channel timezone")
+        self.guild_id = guild_id
+        self.channel_id = channel_id
+        self.parent = parent
+        cs = get_channel_state(guild_id, channel_id)
+        self.tz_input = discord.ui.TextInput(
+            label="Timezone",
+            placeholder="e.g. US/Eastern, Europe/London, UTC",
+            required=True,
+            max_length=64,
+            default=cs.get("timezone") or "UTC",
+        )
+        self.add_item(self.tz_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        import pytz
+        raw = str(self.tz_input.value).strip()
+        try:
+            pytz.timezone(raw)
+        except Exception:
+            await interaction.response.send_message(
+                f"❌ `{raw}` isn't a valid timezone. Try e.g. `US/Eastern`, `Europe/London`, `UTC`.",
+                ephemeral=True,
+            )
+            return
+        cs = get_channel_state(self.guild_id, self.channel_id)
+        cs["timezone"] = raw
+        save_state()
+        await interaction.response.send_message(f"✅ Timezone set to `{raw}`.", ephemeral=True)
+        await _countdown_apply_via_parent(self.parent, self.guild_id, self.channel_id, confirm=f"✅ Timezone set to `{raw}`.")
+
+
+class CountdownTextModal(discord.ui.Modal):
+    """Edit a free-text override (title or description). Blank clears it."""
+    def __init__(self, guild_id: int, channel_id: int, parent: discord.Interaction, *,
+                 field: str, modal_title: str, label: str, max_len: int, style: discord.TextStyle):
+        super().__init__(title=modal_title)
+        self.guild_id = guild_id
+        self.channel_id = channel_id
+        self.parent = parent
+        self.field = field
+        self.max_len = max_len
+        cs = get_channel_state(guild_id, channel_id)
+        self.text_input = discord.ui.TextInput(
+            label=label,
+            required=False,
+            max_length=max_len,
+            style=style,
+            default=cs.get(field) or None,
+            placeholder="Leave blank to clear / use the theme default",
+        )
+        self.add_item(self.text_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        raw = str(self.text_input.value or "").strip()
+        cs = get_channel_state(self.guild_id, self.channel_id)
+        cs[self.field] = raw[: self.max_len] if raw else None
+        save_state()
+        confirm = "✅ Cleared." if not raw else "✅ Updated."
+        await interaction.response.send_message(confirm, ephemeral=True)
+        await _countdown_apply_via_parent(self.parent, self.guild_id, self.channel_id, confirm=confirm)
+
+
+class CountdownDigestToggle(discord.ui.Button):
+    def __init__(self, enable: bool):
+        self.enable = enable
+        super().__init__(
+            label="Enable" if enable else "Disable",
+            emoji="📊" if enable else "🔕",
+            style=discord.ButtonStyle.success if enable else discord.ButtonStyle.secondary,
+            row=0,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        view = self.view
+        gid, cid = view.guild_id, view.channel_id
+        g = get_guild_state(gid)
+        if not is_pro(g):
+            await interaction.response.send_message(
+                "💎 The **weekly digest** is a Chromie Pro feature ($2.99/mo). Subscribe via Discord Server Subscription.",
+                ephemeral=True,
+            )
+            return
+        cs = get_channel_state(gid, cid)
+        d = cs.setdefault("digest", {"enabled": False, "channel_id": None, "last_sent_date": None})
+        d["enabled"] = self.enable
+        d["channel_id"] = int(cid)
+        save_state()
+        await _countdown_apply(interaction, gid, cid,
+                               confirm="✅ Weekly digest enabled." if self.enable else "🛑 Weekly digest disabled.")
+
+
+class CountdownDigestView(discord.ui.View):
+    def __init__(self, guild_id: int, channel_id: int):
+        super().__init__(timeout=300)
+        self.guild_id = guild_id
+        self.channel_id = channel_id
+        self.add_item(CountdownDigestToggle(True))
+        self.add_item(CountdownDigestToggle(False))
+        self.add_item(CountdownBackButton())
+
+
+class CountdownRemoveConfirm(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="Yes, remove this countdown", emoji="🗑️", style=discord.ButtonStyle.danger, row=0)
+
+    async def callback(self, interaction: discord.Interaction):
+        view = self.view
+        gid, cid = view.guild_id, view.channel_id
+        g = get_guild_state(gid)
+        g.get("channels", {}).pop(str(cid), None)
+        save_state()
+        await interaction.response.edit_message(
+            embed=discord.Embed(
+                title="🗑️ Countdown removed",
+                description=(
+                    f"<#{cid}> is no longer a countdown channel. Its events and settings were "
+                    "cleared. The old pinned message (if any) was left in place — delete it manually."
+                ),
+                color=discord.Color.orange(),
+            ),
+            view=None,
+        )
+
+
+class CountdownRemoveView(discord.ui.View):
+    def __init__(self, guild_id: int, channel_id: int):
+        super().__init__(timeout=120)
+        self.guild_id = guild_id
+        self.channel_id = channel_id
+        self.add_item(CountdownRemoveConfirm())
+        self.add_item(CountdownBackButton())
+
+
+class CountdownSettingSelect(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label="Theme", value="theme", emoji="🎨", description="Change the countdown look"),
+            discord.SelectOption(label="Timezone", value="timezone", emoji="🌍", description="Timezone for this channel"),
+            discord.SelectOption(label="Time format", value="timeformat", emoji="⏱️", description="How the countdown displays"),
+            discord.SelectOption(label="Mention role", value="role", emoji="🔔", description="Role pinged on milestones"),
+            discord.SelectOption(label="Title (Pro)", value="title", emoji="📝", description="Custom pinned-embed title"),
+            discord.SelectOption(label="Description (Pro)", value="description", emoji="💬", description="Custom intro text"),
+            discord.SelectOption(label="Weekly digest (Pro)", value="digest", emoji="📊", description="Weekly summary post"),
+            discord.SelectOption(label="Remove countdown channel", value="remove", emoji="🗑️", description="Stop this channel's countdown"),
+        ]
+        super().__init__(placeholder="Choose a setting to change…", min_values=1, max_values=1, options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        view = self.view
+        gid, cid = view.guild_id, view.channel_id
+        g = get_guild_state(gid)
+        choice = self.values[0]
+
+        if choice == "theme":
+            await interaction.response.edit_message(
+                embed=discord.Embed(
+                    title="🎨 Pick a theme",
+                    description="Supporter themes need an active `/vote` or Chromie Pro.",
+                    color=EMBED_COLOR,
+                ),
+                view=CountdownSubView(gid, cid, CountdownThemeSelect(g)),
+            )
+        elif choice == "timeformat":
+            await interaction.response.edit_message(
+                embed=discord.Embed(title="⏱️ Pick a time format", color=EMBED_COLOR),
+                view=CountdownSubView(gid, cid, CountdownTimeFormatSelect()),
+            )
+        elif choice == "role":
+            await interaction.response.edit_message(
+                embed=discord.Embed(
+                    title="🔔 Mention role",
+                    description="Pick a role to ping on milestone posts, or clear it.",
+                    color=EMBED_COLOR,
+                ),
+                view=CountdownRoleView(gid, cid),
+            )
+        elif choice == "timezone":
+            await interaction.response.send_modal(CountdownTimezoneModal(gid, cid, interaction))
+        elif choice in ("title", "description"):
+            if not is_pro(g):
+                await interaction.response.send_message(
+                    f"💎 Custom countdown {'titles' if choice == 'title' else 'descriptions'} are a "
+                    "**Chromie Pro** feature ($2.99/mo). Subscribe via Discord Server Subscription.",
+                    ephemeral=True,
+                )
+                return
+            if choice == "title":
+                await interaction.response.send_modal(CountdownTextModal(
+                    gid, cid, interaction, field="countdown_title_override",
+                    modal_title="Custom title", label="Title (blank = theme default)",
+                    max_len=256, style=discord.TextStyle.short))
+            else:
+                await interaction.response.send_modal(CountdownTextModal(
+                    gid, cid, interaction, field="countdown_description_override",
+                    modal_title="Custom description", label="Description (blank = none)",
+                    max_len=1500, style=discord.TextStyle.paragraph))
+        elif choice == "digest":
+            if not is_pro(g):
+                await interaction.response.send_message(
+                    "💎 The **weekly digest** is a Chromie Pro feature ($2.99/mo). Subscribe via Discord Server Subscription.",
+                    ephemeral=True,
+                )
+                return
+            digest = get_channel_state(gid, cid).get("digest") or {}
+            await interaction.response.edit_message(
+                embed=discord.Embed(
+                    title="📊 Weekly digest",
+                    description=f"Currently **{'on' if digest.get('enabled') else 'off'}**. "
+                                "Posts a weekly summary of this channel's upcoming events.",
+                    color=EMBED_COLOR,
+                ),
+                view=CountdownDigestView(gid, cid),
+            )
+        elif choice == "remove":
+            await interaction.response.edit_message(
+                embed=discord.Embed(
+                    title="🗑️ Remove this countdown channel?",
+                    description=(
+                        f"This clears <#{cid}>'s events and settings and stops its countdown. "
+                        "This can't be undone."
+                    ),
+                    color=discord.Color.red(),
+                ),
+                view=CountdownRemoveView(gid, cid),
+            )
+
+
+class CountdownHubView(discord.ui.View):
+    def __init__(self, guild_id: int, channel_id: int):
+        super().__init__(timeout=300)
+        self.guild_id = guild_id
+        self.channel_id = channel_id
+        self.add_item(CountdownSettingSelect())
+
+
+@bot.tree.command(name="countdown", description="Customize this channel's countdown (theme, timezone, format, and more).")
+@app_commands.default_permissions(manage_guild=True)
 @app_commands.checks.has_permissions(manage_guild=True)
 @app_commands.guild_only()
-async def countdown_cleardescription_cmd(interaction: discord.Interaction):
+async def countdown_hub(interaction: discord.Interaction):
     guild = interaction.guild
     assert guild is not None
-    await interaction.response.defer(ephemeral=True)
-
     g = get_guild_state(guild.id)
-    g["countdown_description_override"] = None
-    save_state()
-
-    await refresh_countdown_message(guild, g)
-    await interaction.edit_original_response(content="✅ Countdown description cleared.")
+    cid, cs = resolve_event_channel(g, interaction.channel_id)
+    if cs is None:
+        await interaction.response.send_message(no_channel_guidance(g, "/countdown"), ephemeral=True)
+        return
+    await interaction.response.send_message(
+        embed=build_countdown_settings_embed(cs, g, cid),
+        view=CountdownHubView(guild.id, cid),
+        ephemeral=True,
+    )
 
 
 @bot.tree.command(name="addevent", description="Add a new event to the countdown.")
