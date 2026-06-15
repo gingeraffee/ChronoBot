@@ -598,6 +598,16 @@ def get_guild_timezone(guild_state: dict) -> ZoneInfo:
 
 state = load_state()
 
+# MIGRATION: per-channel data model. Idempotent + self-backing-up. We run this
+# manually on Render before deploying the new code, but calling it here too is
+# defensive self-healing for any un-migrated guild (e.g. one that joined on old
+# code). Wrapped so a single bad guild can never take down all servers.
+try:
+    from migrate_per_channel import migrate_state as _migrate_to_per_channel
+    _migrate_to_per_channel(state)
+except Exception as _mig_err:
+    print(f"[MIGRATION] per-channel migration error at startup: {type(_mig_err).__name__}: {_mig_err}")
+
 # MIGRATION: Disable migration_mode for all guilds to enforce tier limits
 migration_applied = False
 for guild_id_str, g_state in state.get("guilds", {}).items():
@@ -2433,16 +2443,23 @@ def compute_dhm(target: datetime, now: datetime) -> tuple[int, int, int, bool]:
 # EMBED RENDERING
 # ==========================
 
-def build_embed_for_guild(guild_state: dict) -> discord.Embed:
-    layout = get_theme_layout(guild_state) or {}
+def build_embed_for_channel(channel_state: dict, guild_state: dict) -> discord.Embed:
+    """Render the pinned countdown embed for ONE channel's countdown.
+
+    Per-channel data (events, theme, timezone, title/description overrides,
+    time_unit) comes from `channel_state`; the server-level Supporter/Pro status
+    line comes from `guild_state`. Use build_embed_for_guild() for the legacy
+    single-countdown path (it passes the guild dict as both arguments).
+    """
+    layout = get_theme_layout(channel_state) or {}
 
     # Harden events
-    events = guild_state.get("events", [])
+    events = channel_state.get("events", [])
     if not isinstance(events, list):
         events = []
     events = list(events)  # shallow copy of list
 
-    tz = get_guild_timezone(guild_state)
+    tz = get_guild_timezone(channel_state)
 
     now = datetime.now(tz)
 
@@ -2454,7 +2471,7 @@ def build_embed_for_guild(guild_state: dict) -> discord.Embed:
             return 0.0
     events.sort(key=_ts)
 
-    override_title = (guild_state.get("countdown_title_override") or "").strip()
+    override_title = (channel_state.get("countdown_title_override") or "").strip()
     embed_title = override_title[:256] if override_title else (layout.get("title") or "Event Countdown")[:256]
 
     embed = discord.Embed(
@@ -2463,13 +2480,13 @@ def build_embed_for_guild(guild_state: dict) -> discord.Embed:
     )
 
     emoji = layout.get("emoji", "🕒")
-    time_unit = guild_state.get("time_unit", "discord")
+    time_unit = channel_state.get("time_unit", "discord")
 
     # Theme-provided subtitle/heading (fallback)
     theme_subtitle = layout.get("subtitle", layout.get("description", "📅 Upcoming events:"))
 
     # NEW: Supporter custom intro shown above the list
-    custom_intro = (guild_state.get("countdown_description_override") or "").strip()
+    custom_intro = (channel_state.get("countdown_description_override") or "").strip()
 
     # Build the header area (intro first, then the theme subtitle)
     header_lines = []
@@ -2570,10 +2587,20 @@ def build_embed_for_guild(guild_state: dict) -> discord.Embed:
     return embed
 
 
-async def rebuild_pinned_message(guild_id: int, channel: discord.TextChannel, guild_state: dict):
-    sort_events(guild_state)
+def build_embed_for_guild(guild_state: dict) -> discord.Embed:
+    """Legacy single-countdown path: the guild dict holds both the per-channel
+    fields and the server-level status, so it serves as both arguments."""
+    return build_embed_for_channel(guild_state, guild_state)
 
-    old_id = guild_state.get("pinned_message_id")
+
+async def rebuild_pinned_message_for_channel(
+    channel: discord.TextChannel, channel_state: dict, guild_state: dict
+):
+    """Rebuild the pinned countdown for ONE channel bucket. The legacy
+    rebuild_pinned_message() wraps this, passing the guild dict as the bucket."""
+    sort_events(channel_state)
+
+    old_id = channel_state.get("pinned_message_id")
     if old_id:
         try:
             old_msg = await channel.fetch_message(int(old_id))
@@ -2585,7 +2612,7 @@ async def rebuild_pinned_message(guild_id: int, channel: discord.TextChannel, gu
         except (discord.NotFound, discord.HTTPException, discord.Forbidden):
             pass
 
-    embed = build_embed_for_guild(guild_state)
+    embed = build_embed_for_channel(channel_state, guild_state)
 
     try:
         msg = await channel.send(embed=embed)
@@ -2608,22 +2635,30 @@ async def rebuild_pinned_message(guild_id: int, channel: discord.TextChannel, gu
         await ensure_countdown_pinned(channel.guild, channel, msg, perms=perms)
     except Exception:
         # ensure_countdown_pinned should ideally swallow its own errors,
-        # but this keeps rebuild_pinned_message from ever crashing.
+        # but this keeps rebuild from ever crashing.
         pass
 
-    guild_state["pinned_message_id"] = msg.id
+    channel_state["pinned_message_id"] = msg.id
     save_state()
     return msg
 
-async def get_or_create_pinned_message(
-    guild_id: int,
+
+async def rebuild_pinned_message(guild_id: int, channel: discord.TextChannel, guild_state: dict):
+    """Legacy single-countdown wrapper around rebuild_pinned_message_for_channel."""
+    return await rebuild_pinned_message_for_channel(channel, guild_state, guild_state)
+
+async def get_or_create_pinned_message_for_channel(
     channel: discord.TextChannel,
+    state_bucket: dict,
+    guild_state: dict,
     *,
     allow_create: bool = False,
 ):
-    guild_state = get_guild_state(guild_id)
-    sort_events(guild_state)
-    pinned_id = guild_state.get("pinned_message_id")
+    """Per-channel pinned-message resolver. `state_bucket` holds this channel's
+    events + pinned_message_id; `guild_state` is used for the embed status line.
+    The legacy get_or_create_pinned_message() wraps this."""
+    sort_events(state_bucket)
+    pinned_id = state_bucket.get("pinned_message_id")
 
     bot_member = await get_bot_member(channel.guild)
     if bot_member is None:
@@ -2681,7 +2716,7 @@ async def get_or_create_pinned_message(
             await ensure_countdown_pinned(channel.guild, channel, msg, perms=perms)
             return msg
         except discord.NotFound:
-            guild_state["pinned_message_id"] = None
+            state_bucket["pinned_message_id"] = None
             save_state()
             pinned_id = None
         except discord.Forbidden:
@@ -2705,7 +2740,7 @@ async def get_or_create_pinned_message(
             bot_pins = [m for m in pins if m.author and m.author.id == bot_member.id]
             if bot_pins:
                 m = max(bot_pins, key=lambda x: x.created_at)
-                guild_state["pinned_message_id"] = m.id
+                state_bucket["pinned_message_id"] = m.id
                 save_state()
                 await ensure_countdown_pinned(channel.guild, channel, m, perms=perms)
                 return m
@@ -2728,7 +2763,7 @@ async def get_or_create_pinned_message(
     if not allow_create:
         return None
 
-    embed = build_embed_for_guild(guild_state)
+    embed = build_embed_for_channel(state_bucket, guild_state)
     try:
         msg = await channel.send(embed=embed)
         await ensure_countdown_pinned(channel.guild, channel, msg, perms=perms)
@@ -2757,9 +2792,15 @@ async def get_or_create_pinned_message(
     except discord.HTTPException:
         return None
 
-    guild_state["pinned_message_id"] = msg.id
+    state_bucket["pinned_message_id"] = msg.id
     save_state()
     return msg
+
+
+async def get_or_create_pinned_message(guild_id: int, channel: discord.TextChannel, *, allow_create: bool = False):
+    """Legacy single-countdown wrapper around get_or_create_pinned_message_for_channel."""
+    gs = get_guild_state(guild_id)
+    return await get_or_create_pinned_message_for_channel(channel, gs, gs, allow_create=allow_create)
 
 
 async def get_text_channel(channel_id) -> Optional[discord.TextChannel]:
@@ -3020,25 +3061,13 @@ async def weekly_digest_loop():
 async def before_weekly_digest_loop():
     await bot.wait_until_ready()
 
-@tasks.loop(seconds=UPDATE_INTERVAL_SECONDS)
-async def update_countdowns():
-    guilds = state.get("guilds", {})
-    for gid_str, guild_state in list(guilds.items()):
-        try:
-            guild_id = int(gid_str)
+async def _run_countdown_cycle(guild_id, guild_state, channel, bot_member, server_state):
+    # NOTE: `guild_state` here is the per-channel bucket (named this way so the
+    # long loop body below needs no changes); `server_state` is the guild dict,
+    # used only for the server-level Supporter/Pro status line in the embed.
+    if True:
+        if True:
             sort_events(guild_state)
-
-            channel_id = guild_state.get("event_channel_id")
-            if not channel_id:
-                continue
-
-            channel = await get_text_channel(channel_id)
-            if channel is None:
-                continue
-
-            bot_member = await get_bot_member(channel.guild)
-            if bot_member is None:
-                continue
 
             # ----------------------------
             # ✅ Dirty flag + flush helpers
@@ -3348,25 +3377,24 @@ async def update_countdowns():
 
             # ---- Update pinned embed once at end (reflects changes) ----
             try:
-                pinned = await get_or_create_pinned_message(guild_id, channel, allow_create=True)
+                pinned = await get_or_create_pinned_message_for_channel(channel, guild_state, server_state, allow_create=True)
             except Exception:
                 print(f"[Guild {guild_id}] get_or_create_pinned_message failed:\n{traceback.format_exc()}")
                 pinned = None
 
             if pinned is not None:
                 try:
-                    embed = build_embed_for_guild(guild_state)
+                    embed = build_embed_for_channel(guild_state, server_state)
                 except Exception:
-                    print(f"[Guild {guild_id}] build_embed_for_guild failed:\n{traceback.format_exc()}")
+                    print(f"[Guild {guild_id}] build_embed_for_channel failed:\n{traceback.format_exc()}")
                     embed = None
 
                 if embed is not None:
                     try:
                         await pinned.edit(embed=embed)
                     except discord.NotFound:
-                        gs = get_guild_state(guild_id)
-                        if gs.get("pinned_message_id") == pinned.id:
-                            gs["pinned_message_id"] = None
+                        if guild_state.get("pinned_message_id") == pinned.id:
+                            guild_state["pinned_message_id"] = None
                             mark_dirty()
                             flush_if_dirty()  # worth flushing quickly
                     except discord.Forbidden:
@@ -3380,12 +3408,35 @@ async def update_countdowns():
                     except discord.HTTPException as e:
                         print(f"[Guild {guild_id}] Failed to edit pinned message: {e}")
 
-            # ✅ Final flush: saves prune/anchor fixes/etc once per guild cycle
+            # ✅ Final flush: saves prune/anchor fixes/etc once per channel cycle
             flush_if_dirty()
 
-        except Exception as e:
-            print(f"[Guild {gid_str}] update_countdowns crashed for this guild: {type(e).__name__}: {e}")
+
+@tasks.loop(seconds=UPDATE_INTERVAL_SECONDS)
+async def update_countdowns():
+    """Per-channel countdown engine: for each guild, refresh every countdown
+    channel's milestones, start blasts, repeats, pruning, and pinned embed."""
+    guilds = state.get("guilds", {})
+    for gid_str, guild_state in list(guilds.items()):
+        try:
+            guild_id_int = int(gid_str)
+        except (TypeError, ValueError):
             continue
+        for cid, channel_state in iter_channel_states(guild_state):
+            try:
+                channel = await get_text_channel(cid)
+                if channel is None:
+                    continue
+                bot_member = await get_bot_member(channel.guild)
+                if bot_member is None:
+                    continue
+                await _run_countdown_cycle(
+                    guild_id_int, channel_state, channel, bot_member, guild_state
+                )
+            except Exception as e:
+                print(f"[Guild {gid_str} / channel {cid}] update_countdowns crashed: {type(e).__name__}: {e}")
+                continue
+
 
 @update_countdowns.before_loop
 async def before_update_countdowns():
