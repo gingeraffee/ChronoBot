@@ -126,11 +126,19 @@ hook + Chrome and drove all four flows — **all PASS**:
     `/countdown → Build-your-own`. `get_theme_layout` resolves "custom" from the bucket;
     messages fall back to classic. "custom" is NOT in the theme dicts (won't show in the
     picker).
-- **NEXT UP — Go-live** (see procedure below). The feature set is complete; this is the
-  last step before merging to `main`. (Build-your-own is unverified live — optional to
-  drive on the test guild first.)
+- ✅ DONE — entire themes revamp **live-verified** on the test guild `2026-06-15`:
+  new themes + markers (incl. spooky "Sep/Oct only", gamelaunch "Pro only"), preview,
+  supporter apply-gate, and build-your-own (modal → custom embed on the pin). (One
+  noted *driving artifact*: typing an emoji into the modal title via automation
+  duplicated text — not a code bug.)
+- ✅ DONE `d13faf5` — refreshed the post-install onboarding (`send_onboarding_for_guild`):
+  "Make it yours" section (19 themes, preview, first-channel-free/Pro-per-channel),
+  build-your-own + seasonal in the tier copy. Both DMs < 2000 chars.
+- **NEXT UP — Go-live** (see procedure below). The feature set is complete + live-verified;
+  this is the last step before merging to `main`.
 - Housekeeping: git is committing as `nicole.thornton@apirx.com`; switch to
-  `nthorn330@gmail.com` if these commits should carry the gmail identity.
+  `nthorn330@gmail.com` if these commits should carry the gmail identity. Reset the
+  test bot token (pasted in chat). Delete this HANDOFF.md before merging to `main`.
 
 ## Tests & local dev
 ```bash
