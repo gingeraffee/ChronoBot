@@ -1157,6 +1157,19 @@ PERM_LABELS = {
     "manage_messages": "Manage Messages (pin/unpin)",
 }
 
+# Of the recommended perms, only these actually BLOCK the countdown from posting.
+# manage_messages (pin) and read_message_history only degrade it — the countdown
+# still posts and updates, it just can't be pinned / can't auto-clean old pins.
+CRITICAL_CHANNEL_PERMS = ("view_channel", "send_messages", "embed_links")
+
+
+def classify_missing_perms(missing) -> tuple[list[str], list[str]]:
+    """Split missing perm codes into (blocking, degraded). Blocking perms stop the
+    countdown from posting at all; degraded perms only affect pinning / cleanup."""
+    blocking = [p for p in missing if p in CRITICAL_CHANNEL_PERMS]
+    degraded = [p for p in missing if p not in CRITICAL_CHANNEL_PERMS]
+    return blocking, degraded
+
 
 def _bot_member_cached(guild: discord.Guild) -> Optional[discord.Member]:
     if guild.me is not None:
@@ -3649,16 +3662,23 @@ async def seteventchannel(interaction: discord.Interaction):
     sort_events(cs)
     save_state()
 
-    # Permissions check + owner DM (you already do this)
+    # Permissions check. Split into perms that BLOCK the countdown (it can't post)
+    # vs perms that merely DEGRADE it (posts fine, just can't pin / auto-clean), so
+    # we don't cry wolf when the countdown actually works.
     missing: list[str] = []
+    blocking: list[str] = []
+    degraded: list[str] = []
     if hasattr(new_channel, "permissions_for"):
         missing = missing_channel_perms(new_channel, guild)
-        if missing:
+        blocking, degraded = classify_missing_perms(missing)
+        # Only DM the owner the "quick fix" guide when the countdown is actually
+        # broken — a missing pin perm doesn't warrant an owner DM.
+        if blocking:
             await notify_owner_missing_perms(
                 guild,
                 new_channel,
-                missing=missing,
-                action="set up the countdown (send + pin + update)",
+                missing=blocking,
+                action="post the countdown (it can't show until this is fixed)",
             )
 
     # 🔔 Notify owner + optionally post an audit note in the channel.
@@ -3672,12 +3692,21 @@ async def seteventchannel(interaction: discord.Interaction):
     # Build the pinned countdown immediately so the channel shows something.
     await rebuild_pinned_message_for_channel(new_channel, cs, guild_state)
 
-    extra = ""
-    if missing:
+    def _perm_names(codes):
+        return ", ".join(f"**{PERM_LABELS.get(p, p)}**" for p in codes)
+
+    if blocking:
         extra = (
-            "\n\n⚠️ I’m missing some permissions in this channel, so the countdown may not work yet. "
-            "I’ve messaged the server owner with a quick fix guide."
+            f"\n\n⚠️ I’m missing {_perm_names(blocking)} here, so the countdown can’t post yet. "
+            "I’ve messaged the server owner with a quick fix guide — grant those and it’ll appear."
         )
+    elif degraded:
+        extra = (
+            f"\n\nℹ️ The countdown is posted. Heads-up: I’m missing {_perm_names(degraded)} here — "
+            "not required, but granting it lets me keep the countdown pinned and tidy."
+        )
+    else:
+        extra = ""
 
     await interaction.edit_original_response(
         content="✅ This channel is now a countdown channel.\nUse `/addevent` here to add events." + extra
