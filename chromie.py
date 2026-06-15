@@ -1109,8 +1109,20 @@ async def sync_discord_subscription(guild_id: int) -> bool:
 class ChromieBot(commands.Bot):
     async def setup_hook(self):
         try:
-            await self.tree.sync()
-            print(f"Slash commands synced (setup_hook). [{VERSION}]")
+            # Safe-launch hook: if CHROMIE_TEST_GUILD_ID is set (local/test runs),
+            # sync ONLY to that guild — instant, and it can never touch the global
+            # command set on the 600+ live servers. Unset (production) → global sync,
+            # exactly the original behavior.
+            test_guild_id = os.getenv("CHROMIE_TEST_GUILD_ID", "").strip()
+            if test_guild_id:
+                guild = discord.Object(id=int(test_guild_id))
+                self.tree.copy_global_to(guild=guild)
+                synced = await self.tree.sync(guild=guild)
+                print(f"Slash commands synced to TEST guild {test_guild_id} "
+                      f"({len(synced)} cmds; global tree untouched). [{VERSION}]")
+            else:
+                await self.tree.sync()
+                print(f"Slash commands synced (global, setup_hook). [{VERSION}]")
         except Exception as e:
             print(f"Error syncing commands (setup_hook): {e}")
 
