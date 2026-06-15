@@ -137,6 +137,47 @@ def test_preview_apply_button_state():
     assert f("classic", free) == ("Apply this theme", "✅")
 
 
+# ---- build-your-own custom theme ----
+
+def test_custom_layout_reads_bucket():
+    cs = {"theme": "custom", "custom_theme": {
+        "title": "My Board", "subtitle": "sub", "footer": "ftr",
+        "color": 0x8C52FF, "emoji": "🎯"}}
+    lay = chromie.get_theme_layout(cs)
+    assert lay["title"] == "My Board"
+    assert lay["emoji"] == "🎯"
+    assert lay["footer"] == "ftr"
+    assert lay["color"].value == 0x8C52FF
+
+
+def test_custom_layout_falls_back_without_bucket():
+    # theme=custom but nothing defined yet -> classic base, no crash
+    lay = chromie.get_theme_layout({"theme": "custom", "custom_theme": None})
+    assert lay["title"] == chromie.THEME_LAYOUTS["classic"]["title"]
+    # partial custom_theme: only color set, rest from classic
+    lay2 = chromie.get_theme_layout({"theme": "custom", "custom_theme": {"color": 0x112233}})
+    assert lay2["color"].value == 0x112233
+    assert lay2["title"] == chromie.THEME_LAYOUTS["classic"]["title"]
+
+
+def test_custom_theme_embed_and_messages():
+    cs = {"theme": "custom", "events": [], "timezone": "UTC", "time_unit": "discord",
+          "custom_theme": {"title": "Launch HQ", "color": 0x00D1B2, "emoji": "🚀"}}
+    e = chromie.build_embed_for_channel(cs, {})
+    assert e.title == "Launch HQ"
+    assert e.color.value == 0x00D1B2
+    # reminder messages fall back to a valid (classic) style, no crash
+    assert chromie.build_milestone_message(cs, event_name="E", days_left=2, time_left="2 days", date_str="Jan 1")
+    assert chromie.build_start_blast_message(cs, event_name="E")
+
+
+def test_custom_not_in_theme_dicts():
+    # 'custom' is virtual — must NOT pollute the picker/theme dicts
+    assert "custom" not in chromie.THEMES
+    assert "custom" not in chromie._THEME_LABELS
+    assert "custom" not in chromie.THEME_LAYOUTS
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

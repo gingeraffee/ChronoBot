@@ -733,6 +733,7 @@ def _default_channel_state() -> dict:
         "auto_delete_milestones": True,
         "time_unit": "discord",
         "timezone": "UTC",
+        "custom_theme": None,  # Pro build-your-own: {title, subtitle, footer, color(int), emoji}
     }
 
 
@@ -2556,7 +2557,27 @@ def get_theme_layout(guild_state: dict, theme_id: Optional[str] = None) -> dict:
     tid = (theme_id or guild_state.get("theme") or "classic")
     tid = str(tid).lower()
 
-    layout = THEME_LAYOUTS.get(tid, THEME_LAYOUTS["classic"]).copy()
+    if tid == "custom":
+        # Pro build-your-own: read the per-channel custom_theme bucket; classic is
+        # the base for anything the user didn't set.
+        layout = THEME_LAYOUTS["classic"].copy()
+        ct = guild_state.get("custom_theme") if isinstance(guild_state, dict) else None
+        if isinstance(ct, dict):
+            if ct.get("title"):
+                layout["title"] = str(ct["title"])[:256]
+            if ct.get("subtitle") is not None:
+                layout["subtitle"] = str(ct["subtitle"])
+            if ct.get("footer") is not None:
+                layout["footer"] = str(ct["footer"])
+            if ct.get("emoji"):
+                layout["emoji"] = str(ct["emoji"])
+            if isinstance(ct.get("color"), int):
+                try:
+                    layout["color"] = discord.Color(ct["color"])
+                except Exception:
+                    pass
+    else:
+        layout = THEME_LAYOUTS.get(tid, THEME_LAYOUTS["classic"]).copy()
 
     # Guarantee required keys exist
     layout.setdefault("title", "Event Countdown")
@@ -3845,7 +3866,7 @@ _TIME_UNIT_LABELS = {
 def build_countdown_settings_embed(cs: dict, guild_state: dict, channel_id: int) -> discord.Embed:
     """Render the current settings for one countdown channel."""
     theme_id = normalize_theme_key(cs.get("theme"))
-    theme_label = _THEME_LABELS.get(theme_id, theme_id.title())
+    theme_label = "Build-Your-Own 🎨" if theme_id == "custom" else _THEME_LABELS.get(theme_id, theme_id.title())
     tz = cs.get("timezone") or "UTC"
     unit = cs.get("time_unit", "discord")
     role_id = cs.get("mention_role_id")
@@ -4225,6 +4246,58 @@ class CountdownTextModal(discord.ui.Modal):
         await _countdown_apply_via_parent(self.parent, self.guild_id, self.channel_id, confirm=confirm)
 
 
+class CountdownBuildModal(discord.ui.Modal):
+    """Pro build-your-own theme: one modal sets the whole custom embed look."""
+    def __init__(self, gid: int, cid: int, parent: discord.Interaction):
+        super().__init__(title="Build your own theme")
+        self.gid, self.cid, self.parent = gid, cid, parent
+        ct = get_channel_state(gid, cid).get("custom_theme") or {}
+        color_default = f"#{ct['color']:06X}" if isinstance(ct.get("color"), int) else None
+        self.title_in = discord.ui.TextInput(
+            label="Embed title", required=False, max_length=256,
+            default=ct.get("title") or None, placeholder="🎯 Our Countdown")
+        self.subtitle_in = discord.ui.TextInput(
+            label="Subtitle / intro line", required=False, max_length=200,
+            style=discord.TextStyle.paragraph, default=ct.get("subtitle") or None,
+            placeholder="What this countdown is about")
+        self.footer_in = discord.ui.TextInput(
+            label="Footer", required=False, max_length=200,
+            default=ct.get("footer") or None, placeholder="Updated every minute")
+        self.color_in = discord.ui.TextInput(
+            label="Color (hex, e.g. #8C52FF)", required=False, max_length=7,
+            default=color_default, placeholder="#8C52FF")
+        self.emoji_in = discord.ui.TextInput(
+            label="Event emoji", required=False, max_length=12,
+            default=ct.get("emoji") or None, placeholder="🎯")
+        for item in (self.title_in, self.subtitle_in, self.footer_in, self.color_in, self.emoji_in):
+            self.add_item(item)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        raw_color = str(self.color_in.value or "").strip().lstrip("#")
+        color_int = None
+        if raw_color:
+            try:
+                color_int = int(raw_color, 16)
+            except ValueError:
+                color_int = -1
+            if not (0 <= color_int <= 0xFFFFFF):
+                await interaction.response.send_message(
+                    "❌ Color must be a 6-digit hex code like `#8C52FF`.", ephemeral=True)
+                return
+        cs = get_channel_state(self.gid, self.cid)
+        cs["custom_theme"] = {
+            "title": (str(self.title_in.value).strip() or None),
+            "subtitle": (str(self.subtitle_in.value).strip() or None),
+            "footer": (str(self.footer_in.value).strip() or None),
+            "color": color_int,
+            "emoji": (str(self.emoji_in.value).strip() or None),
+        }
+        cs["theme"] = "custom"
+        save_state()
+        await interaction.response.send_message("✅ Custom theme saved and applied.", ephemeral=True)
+        await _countdown_apply_via_parent(self.parent, self.gid, self.cid, confirm="✅ Custom theme applied.")
+
+
 class CountdownDigestToggle(discord.ui.Button):
     def __init__(self, enable: bool):
         self.enable = enable
@@ -4340,6 +4413,7 @@ class CountdownSettingSelect(discord.ui.Select):
             discord.SelectOption(label="Title (Pro)", value="title", emoji="📝", description="Custom pinned-embed title"),
             discord.SelectOption(label="Description (Pro)", value="description", emoji="💬", description="Custom intro text"),
             discord.SelectOption(label="Weekly digest (Pro)", value="digest", emoji="📊", description="Weekly summary post"),
+            discord.SelectOption(label="Build-your-own theme (Pro)", value="buildyourown", emoji="🎨", description="Custom color, emoji, title & footer"),
             discord.SelectOption(label="Remove countdown channel", value="remove", emoji="🗑️", description="Stop this channel's countdown"),
         ]
         super().__init__(placeholder="Choose a setting to change…", min_values=1, max_values=1, options=options)
@@ -4424,6 +4498,15 @@ class CountdownSettingSelect(discord.ui.Select):
                 ),
                 view=CountdownDigestView(gid, cid),
             )
+        elif choice == "buildyourown":
+            if not is_pro(g):
+                await interaction.response.send_message(
+                    "💎 **Build-your-own themes** are a Chromie Pro feature ($2.99/mo) — design your own "
+                    "embed color, emoji, title and footer. Subscribe via Discord Server Subscription.",
+                    ephemeral=True,
+                )
+                return
+            await interaction.response.send_modal(CountdownBuildModal(gid, cid, interaction))
         elif choice == "remove":
             await interaction.response.edit_message(
                 embed=discord.Embed(

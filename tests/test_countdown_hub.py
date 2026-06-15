@@ -62,7 +62,7 @@ def test_hub_view_has_setting_select_with_all_options():
     assert len(selects) == 1
     values = {o.value for o in selects[0].options}
     assert values == {"theme", "timezone", "timeformat", "role", "autodelete",
-                      "title", "description", "digest", "remove"}
+                      "title", "description", "digest", "buildyourown", "remove"}
 
 
 def test_time_format_select_matches_unit_labels():
