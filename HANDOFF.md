@@ -1,8 +1,11 @@
 # ChronoBot — Per-Channel Countdowns: Session Handoff
 
-> **To resume:** open a new session and say **"continue the command sweep"**.
-> Branch: `feature/per-channel-countdowns`. This file + the Claude memory files
-> hold the full plan. Delete this file before merging to `main`.
+> **To resume (next session on this machine):** the command sweep is DONE and
+> **verified end-to-end on a live test guild** (see "VERIFIED" below). Pick up at
+> **NEXT UP: perms-warning copy tweak** in the REMAINING section.
+> Branch: `feature/per-channel-countdowns` (working tree clean; tip = `7864f11`).
+> This file + the Claude memory files hold the full plan. Delete this file before
+> merging to `main`.
 
 ## ⚠️ Live system — read first
 - ChronoBot ("Chromie") is **live on 600+ Discord servers**, hosted on **Render**.
@@ -81,11 +84,47 @@ Command surface is now ~22 (was ~50): hubs `/countdown` + `/event`; fast top-lev
 `/addevent /listevents /nextevent /remindall /chronohelp /vote /pro_status
 /seteventchannel`; `/template save|load`; admin/maintenance the rest.
 
+## ✅ VERIFIED (live test guild, end-to-end)
+Ran the test bot locally against a throwaway guild ("Bots & Beyond") via the safe
+hook + Chrome and drove all four flows — **all PASS**:
+- `/seteventchannel` registers the per-channel bucket, posts + pins the countdown.
+- `/addevent` adds per-channel, counts the Free 1/3 limit, updates the pin.
+- `/countdown` hub renders settings (incl. auto-delete + Pro 🔒 locks); theme
+  sub-view + supporter-theme gating (locked theme → vote/Pro upsell) work.
+- `/event` hub: list → detail (shows **Owner DMs: off** default) → action router;
+  the **Owner-DM opt-in toggle** flips on and re-renders.
+- Monetization gate: `/seteventchannel` in a 2nd channel on a free server → the
+  "Multiple countdown channels are a Chromie Pro feature" upsell. ✅
+- Command pickers confirmed the test bot exposes only the condensed hubs; the
+  retired granular commands are gone.
+
+### How to re-run the live test (recipe)
+1. Test bot only — NEVER the prod token (the safe hook makes it guild-scoped, but
+   still use a separate test app). Invite it to a throwaway guild w/ Manage Server.
+2. `CHROMIE_DATA_PATH=./_verify_live_state.json CHROMIE_TEST_GUILD_ID=<guildId> DISCORD_BOT_TOKEN=<testToken> python chromie.py`
+   → logs "synced to TEST guild … (global tree untouched)".
+3. Drive commands in Discord (Chrome extension). Stop the bot + delete
+   `_verify_live_state.json` / `_verify_bot.log` when done.
+> ⚠️ The test bot token shared last session is in chat history — **reset it** in the
+> Discord Developer Portal before reusing.
+
 ## ▶️ REMAINING
+- **NEXT UP — perms-warning copy tweak** (small, from the verify findings): in
+  `/seteventchannel` the `extra` warning ("I'm missing some permissions in this
+  channel, so the countdown may not work yet") fires whenever `missing_channel_perms`
+  returns ANY perm — even non-critical ones (e.g. read_message_history /
+  mention_everyone) — so it showed even though the countdown posted + pinned fine.
+  Fix: name the specific missing perm(s) and/or only show the alarming "may not work
+  yet" wording when a perm that actually blocks send/embed/pin is missing; otherwise
+  a softer "optional perms missing" note. Same generic warning is reused elsewhere
+  via `notify_owner_missing_perms` — scope this tweak to the `/seteventchannel`
+  user-facing `extra` string unless you want a broader pass.
 - **Themes revamp** (the "LAST phase"): preview-before-apply, seasonal/limited Pro
   themes, new themes (Birthday/Baby, Wedding, Game Launch, School/Exam), Pro
   build-your-own. The `/countdown` → Theme Select is the natural surface.
 - **Go-live** (see procedure below) once themes are in or deferred.
+- Housekeeping: git is committing as `nicole.thornton@apirx.com`; switch to
+  `nthorn330@gmail.com` if these commits should carry the gmail identity.
 
 ## Tests & local dev
 ```bash
