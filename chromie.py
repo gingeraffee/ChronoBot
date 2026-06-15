@@ -2172,6 +2172,7 @@ THEMES: Dict[str, Dict[str, Any]] = {
     "spooky": {
         "label": "Spooky Season",
         "supporter_only": True,
+        "season_months": [9, 10],  # only applyable in Sep/Oct (previewable year-round)
         "color": discord.Color.from_rgb(255, 135, 25),
         "pin_title_pool": ["🎃 **SPOOKY COUNTDOWN** • The Clock Creaks", "🕯️ **WITCHING HOUR** • Spirits Rising", "🕸️ **COBWEB CALENDAR** • Something Awaits", "👻 **HAUNTED SCHEDULE** • Time Watches", "🦇 **MIDNIGHT MODE** • Darkness Incoming", "🔮 **CURSED TIMER** • Fate Unknown", "💀 **SKELETON KEY** • Secrets Unlocking"],
         "event_emoji_pool": ["🎃", "👻", "🕷️", "🦇", "💀", "🔮", "🕯️", "🕸️"],
@@ -2268,6 +2269,7 @@ THEMES: Dict[str, Dict[str, Any]] = {
     "gamelaunch": {
         "label": "Game Launch",
         "supporter_only": True,
+        "pro_only": True,  # Pro-exclusive premium theme (a vote won't unlock it)
         "color": discord.Color.from_rgb(0, 209, 178),
         "pin_title_pool": ["🚀 **LAUNCH SEQUENCE** • Release Timer Active", "🎮 **DROP INCOMING** • Day-One Countdown", "🕹️ **PRESS START SOON** • Release Board", "💾 **PRELOAD READY** • Servers Spinning Up", "🛰️ **GO FOR LAUNCH** • Countdown Central", "🔓 **UNLOCK TIMER** • Early Access Ahead", "🎯 **DAY ONE** • Release Tracker"],
         "event_emoji_pool": ["🚀", "🎮", "🕹️", "💾", "🛰️", "🔓", "🎯", "⚡"],
@@ -3878,6 +3880,43 @@ def build_countdown_settings_embed(cs: dict, guild_state: dict, channel_id: int)
     return e
 
 
+_MONTH_ABBR = ("", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+               "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def theme_in_season(theme_id: str, now: Optional[datetime] = None) -> bool:
+    """True if a theme has no season window, or the current month is in it.
+    `season_months` is a list of month numbers (1-12); absent = always available."""
+    months = THEMES.get(theme_id, {}).get("season_months")
+    if not months:
+        return True
+    if now is None:
+        now = datetime.now(timezone.utc)
+    return now.month in months
+
+
+def theme_is_pro_only(theme_id: str) -> bool:
+    """True if a theme requires Chromie Pro specifically (a Top.gg vote won't unlock it)."""
+    return bool(THEMES.get(theme_id, {}).get("pro_only"))
+
+
+def _season_label(theme_id: str) -> str:
+    months = THEMES.get(theme_id, {}).get("season_months") or []
+    return "/".join(_MONTH_ABBR[m] for m in months if 1 <= m <= 12)
+
+
+def theme_picker_description(theme_id: str, guild_state: dict, now: Optional[datetime] = None) -> Optional[str]:
+    """Short label shown under a theme in the /countdown Theme picker (or None)."""
+    if not theme_in_season(theme_id, now):
+        return f"🗓️ {_season_label(theme_id)} only"
+    pro = is_pro(guild_state)
+    if theme_is_pro_only(theme_id) and not pro:
+        return "💎 Pro only"
+    if THEMES.get(theme_id, {}).get("supporter_only") and not (pro or has_active_vote_guild(guild_state)):
+        return "🔒 Supporter / Pro"
+    return None
+
+
 def build_theme_preview_embed(theme_id: str, guild_state: dict) -> discord.Embed:
     """Render a sample countdown in `theme_id` so admins can preview before applying."""
     now = datetime.now(timezone.utc)
@@ -3957,14 +3996,12 @@ class CountdownSubView(discord.ui.View):
 
 class CountdownThemeSelect(discord.ui.Select):
     def __init__(self, guild_state: dict):
-        unlocked = is_pro(guild_state) or has_active_vote_guild(guild_state)
         options = []
         for tid, label in _THEME_LABELS.items():
-            locked = bool(THEMES.get(tid, {}).get("supporter_only")) and not unlocked
             options.append(discord.SelectOption(
                 label=label[:100],
                 value=tid,
-                description="🔒 Supporter / Pro" if locked else None,
+                description=theme_picker_description(tid, guild_state),
             ))
         super().__init__(placeholder="Pick a theme…", min_values=1, max_values=1, options=options[:25])
 
@@ -3986,27 +4023,40 @@ class CountdownThemeSelect(discord.ui.Select):
 
 
 class CountdownThemeApplyButton(discord.ui.Button):
-    def __init__(self, locked: bool):
-        super().__init__(
-            label="Apply this theme" if not locked else "Apply (Supporter/Pro)",
-            emoji="✅" if not locked else "🔒",
-            style=discord.ButtonStyle.success,
-            row=0,
-        )
+    def __init__(self, label: str, emoji: str):
+        super().__init__(label=label, emoji=emoji, style=discord.ButtonStyle.success, row=0)
 
     async def callback(self, interaction: discord.Interaction):
         view = self.view
         gid, cid, tid = view.guild_id, view.channel_id, view.theme_id
         g = get_guild_state(gid)
+        label = _THEME_LABELS.get(tid, tid)
+        # Seasonal themes can be previewed year-round but only applied in season.
+        if not theme_in_season(tid):
+            await interaction.response.send_message(
+                f"🗓️ **{label}** is a seasonal theme — it returns in **{_season_label(tid)}**. "
+                "You can preview it anytime!",
+                ephemeral=True,
+            )
+            return
+        # Pro-only themes: a Top.gg vote does NOT unlock these.
+        if theme_is_pro_only(tid) and not is_pro(g):
+            await interaction.response.send_message(
+                f"💎 **{label}** is a Chromie Pro–exclusive theme ($2.99/mo). Voting doesn't unlock "
+                "this one — subscribe via Discord Server Subscription.",
+                ephemeral=True,
+            )
+            return
+        # Supporter themes: Pro or an active vote from the caller.
         if THEMES.get(tid, {}).get("supporter_only") and not is_pro(g):
             if not await topgg_has_voted(interaction.user.id, force=True):
-                await send_vote_required(interaction, feature_label=f"`{_THEME_LABELS.get(tid, tid)}` theme")
+                await send_vote_required(interaction, feature_label=f"`{label}` theme")
                 return
         cs = get_channel_state(gid, cid)
         cs["theme"] = tid
         save_state()
         await _countdown_refresh_pin(gid, cid)
-        embed = _countdown_hub_embed_with_note(gid, cid, f"✅ Theme set to **{_THEME_LABELS.get(tid, tid)}**.")
+        embed = _countdown_hub_embed_with_note(gid, cid, f"✅ Theme set to **{label}**.")
         await interaction.response.edit_message(content=None, embed=embed, view=CountdownHubView(gid, cid))
 
 
@@ -4036,11 +4086,20 @@ class CountdownThemePreviewView(discord.ui.View):
         self.channel_id = channel_id
         self.theme_id = theme_id
         g = get_guild_state(guild_id)
-        locked = bool(THEMES.get(theme_id, {}).get("supporter_only")) and not (
-            is_pro(g) or has_active_vote_guild(g)
-        )
-        self.add_item(CountdownThemeApplyButton(locked))
+        label, emoji = self._apply_button_state(theme_id, g)
+        self.add_item(CountdownThemeApplyButton(label, emoji))
         self.add_item(CountdownThemePreviewBackButton())
+
+    @staticmethod
+    def _apply_button_state(theme_id: str, guild_state: dict) -> tuple[str, str]:
+        pro = is_pro(guild_state)
+        if not theme_in_season(theme_id):
+            return "Apply (out of season)", "🗓️"
+        if theme_is_pro_only(theme_id) and not pro:
+            return "Apply (Pro only)", "💎"
+        if THEMES.get(theme_id, {}).get("supporter_only") and not (pro or has_active_vote_guild(guild_state)):
+            return "Apply (Supporter/Pro)", "🔒"
+        return "Apply this theme", "✅"
 
 
 class CountdownTimeFormatSelect(discord.ui.Select):

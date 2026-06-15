@@ -11,6 +11,7 @@ Run from repo root:  python tests/test_themes.py
 import os
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -87,6 +88,53 @@ def test_message_builders_and_embed_work_for_new_themes():
         cs = {"theme": tid, "events": [], "timezone": "UTC", "time_unit": "discord"}
         embed = chromie.build_embed_for_channel(cs, {})
         assert embed.title and embed.description
+
+
+# ---- seasonal / pro-only gating ----
+
+_OCT = datetime(2026, 10, 15, tzinfo=timezone.utc)
+_JUN = datetime(2026, 6, 15, tzinfo=timezone.utc)
+
+
+def test_seasonal_theme_only_in_window():
+    assert chromie.theme_in_season("spooky", _OCT) is True
+    assert chromie.theme_in_season("spooky", _JUN) is False
+    # non-seasonal themes are always in season
+    assert chromie.theme_in_season("football", _JUN) is True
+    assert chromie._season_label("spooky") == "Sep/Oct"
+
+
+def test_pro_only_flag():
+    assert chromie.theme_is_pro_only("gamelaunch") is True
+    assert chromie.theme_is_pro_only("football") is False
+
+
+def test_picker_description_reflects_gates():
+    free = chromie.get_guild_state(770001)
+    pro = chromie.get_guild_state(770002)
+    pro["pro"] = {"discord_subscription": True}
+    # out-of-season beats other states
+    assert chromie.theme_picker_description("spooky", free, _JUN) == "🗓️ Sep/Oct only"
+    # pro-only theme on a free server
+    assert chromie.theme_picker_description("gamelaunch", free) == "💎 Pro only"
+    # ordinary supporter theme on a free server
+    assert chromie.theme_picker_description("football", free) == "🔒 Supporter / Pro"
+    # pro server: supporter + pro-only both unlocked -> no marker
+    assert chromie.theme_picker_description("gamelaunch", pro) is None
+    assert chromie.theme_picker_description("football", pro) is None
+    # free theme: never marked
+    assert chromie.theme_picker_description("classic", free) is None
+
+
+def test_preview_apply_button_state():
+    free = chromie.get_guild_state(770003)
+    pro = chromie.get_guild_state(770004)
+    pro["pro"] = {"discord_subscription": True}
+    f = chromie.CountdownThemePreviewView._apply_button_state
+    assert f("gamelaunch", free) == ("Apply (Pro only)", "💎")
+    assert f("gamelaunch", pro) == ("Apply this theme", "✅")
+    assert f("football", free) == ("Apply (Supporter/Pro)", "🔒")
+    assert f("classic", free) == ("Apply this theme", "✅")
 
 
 if __name__ == "__main__":
