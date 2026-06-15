@@ -3878,6 +3878,21 @@ def build_countdown_settings_embed(cs: dict, guild_state: dict, channel_id: int)
     return e
 
 
+def build_theme_preview_embed(theme_id: str, guild_state: dict) -> discord.Embed:
+    """Render a sample countdown in `theme_id` so admins can preview before applying."""
+    now = datetime.now(timezone.utc)
+    sample_cs = {
+        "theme": theme_id,
+        "timezone": "UTC",
+        "time_unit": "discord",
+        "events": [
+            {"name": "Sample Event", "timestamp": int((now + timedelta(days=3, hours=5)).timestamp())},
+            {"name": "Another Milestone", "timestamp": int((now + timedelta(days=24)).timestamp())},
+        ],
+    }
+    return build_embed_for_channel(sample_cs, guild_state)
+
+
 async def _countdown_refresh_pin(guild_id: int, channel_id: int) -> None:
     """Best-effort: re-render the pinned countdown after a settings change."""
     g = get_guild_state(guild_id)
@@ -3961,15 +3976,71 @@ class CountdownThemeSelect(discord.ui.Select):
         if tid not in THEMES:
             await interaction.response.send_message("Unknown theme.", ephemeral=True)
             return
-        # Supporter themes need Pro or an active Top.gg vote from the caller.
-        if THEMES[tid].get("supporter_only") and not is_pro(g):
+        # Preview first (free, even for locked themes — it's also a nice upsell).
+        # The supporter/Pro gate is enforced on Apply, not here.
+        await interaction.response.edit_message(
+            content=f"🔍 **Preview — {_THEME_LABELS.get(tid, tid)}** (not applied yet)",
+            embed=build_theme_preview_embed(tid, g),
+            view=CountdownThemePreviewView(gid, cid, tid),
+        )
+
+
+class CountdownThemeApplyButton(discord.ui.Button):
+    def __init__(self, locked: bool):
+        super().__init__(
+            label="Apply this theme" if not locked else "Apply (Supporter/Pro)",
+            emoji="✅" if not locked else "🔒",
+            style=discord.ButtonStyle.success,
+            row=0,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        view = self.view
+        gid, cid, tid = view.guild_id, view.channel_id, view.theme_id
+        g = get_guild_state(gid)
+        if THEMES.get(tid, {}).get("supporter_only") and not is_pro(g):
             if not await topgg_has_voted(interaction.user.id, force=True):
                 await send_vote_required(interaction, feature_label=f"`{_THEME_LABELS.get(tid, tid)}` theme")
                 return
         cs = get_channel_state(gid, cid)
         cs["theme"] = tid
         save_state()
-        await _countdown_apply(interaction, gid, cid, confirm=f"✅ Theme set to **{_THEME_LABELS.get(tid, tid)}**.")
+        await _countdown_refresh_pin(gid, cid)
+        embed = _countdown_hub_embed_with_note(gid, cid, f"✅ Theme set to **{_THEME_LABELS.get(tid, tid)}**.")
+        await interaction.response.edit_message(content=None, embed=embed, view=CountdownHubView(gid, cid))
+
+
+class CountdownThemePreviewBackButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="Back to themes", emoji="⬅️", style=discord.ButtonStyle.secondary, row=0)
+
+    async def callback(self, interaction: discord.Interaction):
+        view = self.view
+        gid, cid = view.guild_id, view.channel_id
+        g = get_guild_state(gid)
+        await interaction.response.edit_message(
+            content=None,
+            embed=discord.Embed(
+                title="🎨 Pick a theme",
+                description="Pick one to preview it, then Apply. Supporter themes need an active `/vote` or Chromie Pro.",
+                color=EMBED_COLOR,
+            ),
+            view=CountdownSubView(gid, cid, CountdownThemeSelect(g)),
+        )
+
+
+class CountdownThemePreviewView(discord.ui.View):
+    def __init__(self, guild_id: int, channel_id: int, theme_id: str):
+        super().__init__(timeout=300)
+        self.guild_id = guild_id
+        self.channel_id = channel_id
+        self.theme_id = theme_id
+        g = get_guild_state(guild_id)
+        locked = bool(THEMES.get(theme_id, {}).get("supporter_only")) and not (
+            is_pro(g) or has_active_vote_guild(g)
+        )
+        self.add_item(CountdownThemeApplyButton(locked))
+        self.add_item(CountdownThemePreviewBackButton())
 
 
 class CountdownTimeFormatSelect(discord.ui.Select):
@@ -4224,7 +4295,7 @@ class CountdownSettingSelect(discord.ui.Select):
             await interaction.response.edit_message(
                 embed=discord.Embed(
                     title="🎨 Pick a theme",
-                    description="Supporter themes need an active `/vote` or Chromie Pro.",
+                    description="Pick one to preview it, then Apply. Supporter themes need an active `/vote` or Chromie Pro.",
                     color=EMBED_COLOR,
                 ),
                 view=CountdownSubView(gid, cid, CountdownThemeSelect(g)),

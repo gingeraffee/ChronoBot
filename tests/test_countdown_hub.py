@@ -90,6 +90,28 @@ def test_theme_select_unlocked_for_pro():
     assert by_val["football"].description is None  # no lock for Pro
 
 
+def test_theme_preview_embed_renders_in_chosen_theme():
+    gid = fresh_gid()
+    g = chromie.get_guild_state(gid)
+    e = chromie.build_theme_preview_embed("football", g)
+    blob = (e.title or "") + (e.description or "")
+    assert "Game Day" in (e.title or "")   # football layout title
+    assert "Sample Event" in blob          # sample events rendered
+
+
+def test_theme_preview_apply_label_reflects_lock():
+    # Free server: a supporter theme's Apply button is marked locked.
+    gid_free = fresh_gid()
+    chromie.get_guild_state(gid_free)
+    free_labels = [c.label for c in chromie.CountdownThemePreviewView(gid_free, 1, "football").children]
+    assert any("Supporter/Pro" in (l or "") for l in free_labels)
+    # Pro server: clean Apply.
+    gid_pro = fresh_gid()
+    chromie.get_guild_state(gid_pro)["pro"] = {"discord_subscription": True}
+    pro_labels = [c.label for c in chromie.CountdownThemePreviewView(gid_pro, 1, "football").children]
+    assert any(l == "Apply this theme" for l in pro_labels)
+
+
 def test_sub_and_modal_views_construct():
     gid, cid = fresh_gid(), 9
     chromie.get_channel_state(gid, cid)
