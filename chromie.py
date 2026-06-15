@@ -6260,3 +6260,103 @@ async def owner_unlock_command(
                 pass
 
     await interaction.response.send_message(msg, ephemeral=True)
+
+
+# ==========================
+# LAUNCH ANNOUNCEMENT (owner-only, one-off broadcast)
+# ==========================
+# Bump this string to broadcast a NEW announcement later; the per-channel
+# "already-announced" guard is keyed on it, so each version sends at most once
+# per channel even if the command is re-run.
+ANNOUNCEMENT_VERSION = "per-channel-2026-06"
+
+
+def _build_launch_announcement_embed() -> discord.Embed:
+    return discord.Embed(
+        title="🎉 Chromie just leveled up!",
+        description=(
+            "You can now run **multiple countdowns — one per channel!** 🗓️\n"
+            "Perfect for keeping kids' events, game nights, and community stuff on their own boards.\n\n"
+            "**✨ The new flow:**\n"
+            "🆕 `/seteventchannel` — turn any channel into a countdown "
+            "*(1 free; more with ChronoBot Plus 💎)*\n"
+            "📝 `/event` — add, edit & customize events: milestones, owners, repeats, "
+            "banners & per-event DM reminders — all in one menu\n"
+            "🎨 `/countdown` — make it yours: themes with **live preview**, timezone, "
+            "time format, or build-your-own (Pro)\n\n"
+            "Fresh themes too, including **Family & Kids** 👨‍👩‍👧‍👦 and seasonal looks.\n"
+            "Type `/chronohelp` anytime — happy counting! ⏳💜"
+        ),
+        color=EMBED_COLOR,
+    )
+
+
+async def _is_bot_owner(interaction: discord.Interaction) -> bool:
+    try:
+        if not getattr(bot, "application_info_cached", None):
+            bot.application_info_cached = await bot.application_info()
+        return interaction.user.id == bot.application_info_cached.owner.id
+    except Exception:
+        return False
+
+
+async def _broadcast_launch_announcement(embed: discord.Embed, *, confirm: bool, throttle: float = 0.5) -> dict:
+    """Post `embed` once to every active countdown channel (one with a pinned
+    countdown). Idempotent per ANNOUNCEMENT_VERSION, throttled, and resumable
+    (progress is saved after each send). With confirm=False it only counts."""
+    sent = skipped = failed = would_send = 0
+    for gid_str, guild_state in list(state.get("guilds", {}).items()):
+        announced = guild_state.setdefault("_announced", {})
+        done = announced.setdefault(ANNOUNCEMENT_VERSION, [])
+        for cid, cs in iter_channel_states(guild_state):
+            if not cs.get("pinned_message_id"):
+                continue  # only channels with a live countdown
+            if str(cid) in done:
+                skipped += 1
+                continue
+            would_send += 1
+            if not confirm:
+                continue  # dry run: count only
+            channel = await get_text_channel(int(cid))
+            if channel is None:
+                failed += 1
+                continue
+            try:
+                await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+                done.append(str(cid))
+                sent += 1
+                save_state()  # persist progress so a restart resumes
+                if throttle:
+                    await asyncio.sleep(throttle)
+            except Exception as e:
+                failed += 1
+                print(f"[Announce] {gid_str}/{cid} failed: {type(e).__name__}: {e}")
+    return {"sent": sent, "skipped": skipped, "failed": failed, "would_send": would_send}
+
+
+@bot.tree.command(name="announce_update", description="[Owner] Broadcast the launch announcement to all countdown channels.")
+@app_commands.describe(confirm="Leave unchecked for a dry run (counts only). Set True to actually send.")
+async def announce_update(interaction: discord.Interaction, confirm: bool = False):
+    if not await _is_bot_owner(interaction):
+        await interaction.response.send_message("❌ Owner only.", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    embed = _build_launch_announcement_embed()
+    result = await _broadcast_launch_announcement(embed, confirm=confirm)
+
+    if not confirm:
+        msg = (
+            f"🧪 **Dry run — nothing sent.**\n"
+            f"Would post to **{result['would_send']}** countdown channels "
+            f"(**{result['skipped']}** already announced for `{ANNOUNCEMENT_VERSION}`).\n\n"
+            f"Re-run with **confirm: True** to send for real."
+        )
+    else:
+        msg = (
+            f"📣 **Announcement broadcast complete!**\n"
+            f"✅ Posted: **{result['sent']}**\n"
+            f"⏭️ Skipped (already announced): **{result['skipped']}**\n"
+            f"⚠️ Failed (no access / channel gone): **{result['failed']}**"
+        )
+    await interaction.followup.send(msg, ephemeral=True)
