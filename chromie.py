@@ -6273,22 +6273,47 @@ ANNOUNCEMENT_VERSION = "per-channel-2026-06"
 
 def _build_launch_announcement_embed() -> discord.Embed:
     return discord.Embed(
-        title="🎉 Chromie just leveled up!",
+        title="⏳ Chromie got a glow-up!",
         description=(
-            "You can now run **multiple countdowns — one per channel!** 🗓️\n"
-            "Perfect for keeping kids' events, game nights, and community stuff on their own boards.\n\n"
-            "**✨ The new flow:**\n"
-            "🆕 `/seteventchannel` — turn any channel into a countdown "
-            "*(1 free; more with ChronoBot Plus 💎)*\n"
-            "📝 `/event` — add, edit & customize events: milestones, owners, repeats, "
-            "banners & per-event DM reminders — all in one menu\n"
-            "🎨 `/countdown` — make it yours: themes with **live preview**, timezone, "
-            "time format, or build-your-own (Pro)\n\n"
-            "Fresh themes too, including **Family & Kids** 👨‍👩‍👧‍👦 and seasonal looks.\n"
-            "Type `/chronohelp` anytime — happy counting! ⏳💜"
+            "We rebuilt how countdowns work — and there's something here for everyone.\n\n"
+            "**🆓 New for everyone — a cleaner flow, in 3 steps:**\n"
+            "**1️⃣** `/seteventchannel` — turn a channel into your countdown board.\n"
+            "**2️⃣** `/event` — add & manage it all in one menu: events, milestones, hosts, "
+            "reminders. *(Bye-bye, command soup. 👋)*\n"
+            "**3️⃣** `/countdown` — set your timezone, time format & theme — now with "
+            "**live preview**, so you can window-shop before you commit. ✨\n\n"
+            "**🗳️ Want the fun themes?** Just `/vote` for Chromie (it's free!) and the whole "
+            "closet opens up — **Family & Kids** 👨‍👩‍👧‍👦, Spooky 🎃, Birthday 🎂, D&D 🐉 & more.\n\n"
+            "**💎 ChronoBot Plus — the big one:** run countdowns in **multiple channels** at "
+            "once 🗓️ (kids' events here, raid night there), *plus* build-your-own themes, "
+            "recurring reminders, weekly digests & more.\n\n"
+            "New here? Start with `/seteventchannel` — and `/chronohelp` is always a click away.\n"
+            "🛟 **Hit a snag?** The buttons below have you covered. Now go make every moment count. ⏳💜"
         ),
         color=EMBED_COLOR,
     )
+
+
+def _build_launch_announcement_view():
+    """Link buttons for the announcement (support server, FAQ, vote). Returns
+    None when no links are available so channel.send can simply omit the view."""
+    view = discord.ui.View()
+    added = False
+    if SUPPORT_SERVER_URL:
+        view.add_item(discord.ui.Button(label="Support Server", emoji="🛟",
+                                         style=discord.ButtonStyle.link, url=SUPPORT_SERVER_URL))
+        added = True
+    if FAQ_URL:
+        view.add_item(discord.ui.Button(label="FAQ", emoji="📖",
+                                         style=discord.ButtonStyle.link, url=FAQ_URL))
+        added = True
+    bot_id = get_topgg_bot_id()
+    if bot_id:
+        view.add_item(discord.ui.Button(label="Vote", emoji="🗳️",
+                                         style=discord.ButtonStyle.link,
+                                         url=f"https://top.gg/bot/{bot_id}/vote"))
+        added = True
+    return view if added else None
 
 
 async def _is_bot_owner(interaction: discord.Interaction) -> bool:
@@ -6305,6 +6330,7 @@ async def _broadcast_launch_announcement(embed: discord.Embed, *, confirm: bool,
     countdown). Idempotent per ANNOUNCEMENT_VERSION, throttled, and resumable
     (progress is saved after each send). With confirm=False it only counts."""
     sent = skipped = failed = would_send = 0
+    view = _build_launch_announcement_view()
     for gid_str, guild_state in list(state.get("guilds", {}).items()):
         announced = guild_state.setdefault("_announced", {})
         done = announced.setdefault(ANNOUNCEMENT_VERSION, [])
@@ -6322,7 +6348,7 @@ async def _broadcast_launch_announcement(embed: discord.Embed, *, confirm: bool,
                 failed += 1
                 continue
             try:
-                await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+                await channel.send(embed=embed, view=view, allowed_mentions=discord.AllowedMentions.none())
                 done.append(str(cid))
                 sent += 1
                 save_state()  # persist progress so a restart resumes

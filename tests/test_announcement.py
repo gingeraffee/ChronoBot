@@ -25,7 +25,7 @@ class FakeChannel:
     def __init__(self, cid):
         self.id = cid
 
-    async def send(self, *, embed=None, allowed_mentions=None):
+    async def send(self, *, embed=None, view=None, allowed_mentions=None):
         FakeChannel.sent.append((self.id, getattr(embed, "title", None)))
 
 
@@ -58,9 +58,21 @@ def setup_each():
 
 def test_embed_builds():
     e = chromie._build_launch_announcement_embed()
-    assert "leveled up" in e.title.lower()
-    assert "/event" in (e.description or "")
-    assert "/countdown" in (e.description or "")
+    assert "glow-up" in e.title.lower()
+    desc = e.description or ""
+    for token in ("/seteventchannel", "/event", "/countdown", "/vote", "Plus"):
+        assert token in desc, f"announcement missing {token}"
+
+
+def test_view_has_link_buttons():
+    # FAQ_URL is always set, so the view should exist with >=1 link button.
+    view = chromie._build_launch_announcement_view()
+    assert view is not None
+    labels = [getattr(b, "label", "") for b in view.children]
+    assert "FAQ" in labels
+    # all buttons are link-style (no callbacks needed for a broadcast)
+    import discord
+    assert all(b.style == discord.ButtonStyle.link for b in view.children)
 
 
 def test_dry_run_counts_only():
