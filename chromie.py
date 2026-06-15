@@ -6271,3 +6271,129 @@ async def owner_unlock_command(
                 pass
 
     await interaction.response.send_message(msg, ephemeral=True)
+
+
+# ==========================
+# LAUNCH ANNOUNCEMENT (owner-only, one-off broadcast)
+# ==========================
+# Bump this string to broadcast a NEW announcement later; the per-channel
+# "already-announced" guard is keyed on it, so each version sends at most once
+# per channel even if the command is re-run.
+ANNOUNCEMENT_VERSION = "per-channel-2026-06"
+
+
+def _build_launch_announcement_embed() -> discord.Embed:
+    return discord.Embed(
+        title="⏳ Chromie got a glow-up!",
+        description=(
+            "We rebuilt how countdowns work — and there's something here for everyone.\n\n"
+            "**🆓 New for everyone — a cleaner flow, in 3 steps:**\n"
+            "**1️⃣** `/seteventchannel` — turn a channel into your countdown board.\n"
+            "**2️⃣** `/event` — add & manage it all in one menu: events, milestones, hosts, "
+            "reminders. *(Bye-bye, command soup. 👋)*\n"
+            "**3️⃣** `/countdown` — set your timezone, time format & theme — now with "
+            "**live preview**, so you can window-shop before you commit. ✨\n\n"
+            "**🗳️ Want the fun themes?** Just `/vote` for Chromie (it's free!) and the whole "
+            "closet opens up — **Family & Kids** 👨‍👩‍👧‍👦, Spooky 🎃, Birthday 🎂, D&D 🐉 & more.\n\n"
+            "**💎 ChronoBot Plus — the big one:** run countdowns in **multiple channels** at "
+            "once 🗓️ (kids' events here, raid night there), *plus* build-your-own themes, "
+            "recurring reminders, weekly digests & more.\n\n"
+            "New here? Start with `/seteventchannel` — and `/chronohelp` is always a click away.\n"
+            "🛟 **Hit a snag?** The buttons below have you covered. Now go make every moment count. ⏳💜"
+        ),
+        color=EMBED_COLOR,
+    )
+
+
+def _build_launch_announcement_view():
+    """Link buttons for the announcement (support server, FAQ, vote). Returns
+    None when no links are available so channel.send can simply omit the view."""
+    view = discord.ui.View()
+    added = False
+    if SUPPORT_SERVER_URL:
+        view.add_item(discord.ui.Button(label="Support Server", emoji="🛟",
+                                         style=discord.ButtonStyle.link, url=SUPPORT_SERVER_URL))
+        added = True
+    if FAQ_URL:
+        view.add_item(discord.ui.Button(label="FAQ", emoji="📖",
+                                         style=discord.ButtonStyle.link, url=FAQ_URL))
+        added = True
+    bot_id = get_topgg_bot_id()
+    if bot_id:
+        view.add_item(discord.ui.Button(label="Vote", emoji="🗳️",
+                                         style=discord.ButtonStyle.link,
+                                         url=f"https://top.gg/bot/{bot_id}/vote"))
+        added = True
+    return view if added else None
+
+
+async def _is_bot_owner(interaction: discord.Interaction) -> bool:
+    try:
+        if not getattr(bot, "application_info_cached", None):
+            bot.application_info_cached = await bot.application_info()
+        return interaction.user.id == bot.application_info_cached.owner.id
+    except Exception:
+        return False
+
+
+async def _broadcast_launch_announcement(embed: discord.Embed, *, confirm: bool, throttle: float = 0.5) -> dict:
+    """Post `embed` once to every active countdown channel (one with a pinned
+    countdown). Idempotent per ANNOUNCEMENT_VERSION, throttled, and resumable
+    (progress is saved after each send). With confirm=False it only counts."""
+    sent = skipped = failed = would_send = 0
+    view = _build_launch_announcement_view()
+    for gid_str, guild_state in list(state.get("guilds", {}).items()):
+        announced = guild_state.setdefault("_announced", {})
+        done = announced.setdefault(ANNOUNCEMENT_VERSION, [])
+        for cid, cs in iter_channel_states(guild_state):
+            if not cs.get("pinned_message_id"):
+                continue  # only channels with a live countdown
+            if str(cid) in done:
+                skipped += 1
+                continue
+            would_send += 1
+            if not confirm:
+                continue  # dry run: count only
+            channel = await get_text_channel(int(cid))
+            if channel is None:
+                failed += 1
+                continue
+            try:
+                await channel.send(embed=embed, view=view, allowed_mentions=discord.AllowedMentions.none())
+                done.append(str(cid))
+                sent += 1
+                save_state()  # persist progress so a restart resumes
+                if throttle:
+                    await asyncio.sleep(throttle)
+            except Exception as e:
+                failed += 1
+                print(f"[Announce] {gid_str}/{cid} failed: {type(e).__name__}: {e}")
+    return {"sent": sent, "skipped": skipped, "failed": failed, "would_send": would_send}
+
+
+@bot.tree.command(name="announce_update", description="[Owner] Broadcast the launch announcement to all countdown channels.")
+@app_commands.describe(confirm="Leave unchecked for a dry run (counts only). Set True to actually send.")
+async def announce_update(interaction: discord.Interaction, confirm: bool = False):
+    if not await _is_bot_owner(interaction):
+        await interaction.response.send_message("❌ Owner only.", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    embed = _build_launch_announcement_embed()
+    result = await _broadcast_launch_announcement(embed, confirm=confirm)
+
+    if not confirm:
+        msg = (
+            f"🧪 **Dry run — nothing sent.**\n"
+            f"Would post to **{result['would_send']}** countdown channels "
+            f"(**{result['skipped']}** already announced for `{ANNOUNCEMENT_VERSION}`).\n\n"
+            f"Re-run with **confirm: True** to send for real."
+        )
+    else:
+        msg = (
+            f"📣 **Announcement broadcast complete!**\n"
+            f"✅ Posted: **{result['sent']}**\n"
+            f"⏭️ Skipped (already announced): **{result['skipped']}**\n"
+            f"⚠️ Failed (no access / channel gone): **{result['failed']}**"
+        )
+    await interaction.followup.send(msg, ephemeral=True)
