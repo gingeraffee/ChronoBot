@@ -5345,19 +5345,30 @@ async def add_event_core(guild, guild_state, cs, cid, *, actor, member, date, ti
         event_limit, tier_name = 1, "Free"
 
     if event_limit is not None and current_event_count >= event_limit:
-        if tier_name == "Free":
-            return (
+        # Grandfathered servers can sit ABOVE the new cap (we never delete events).
+        # Show a friendly "over the new limit" note instead of a bug-looking "3/1".
+        if current_event_count > event_limit:
+            headline = (
+                f"📌 **You're above the new {tier_name} limit.**\n\n"
+                f"You have **{current_event_count}** events and the {tier_name} limit is now "
+                f"**{event_limit}**. Your current events stay put — you can add new ones once "
+                f"you're back under **{event_limit}**.\n\n"
+            )
+        else:
+            headline = (
                 f"❌ **Event limit reached!**\n\n"
-                f"You have **{current_event_count}/{event_limit} events** (Free tier limit).\n\n"
+                f"You have **{current_event_count}/{event_limit} events** ({tier_name} tier limit).\n\n"
+            )
+
+        if tier_name == "Free":
+            return headline + (
                 f"**Upgrade options:**\n"
                 f"• 🗳️ **Vote on Top.gg** → Get 3 events (resets every 12 hours)\n"
                 f"  Use `/vote` to get the link!\n"
                 f"• 💎 **Chromie Pro** → Unlimited events + premium features\n\n"
                 f"Or delete an event from `/event` first."
             ), False
-        return (
-            f"❌ **Event limit reached!**\n\n"
-            f"You have **{current_event_count}/{event_limit} events** (Supporter tier limit).\n\n"
+        return headline + (
             f"**Upgrade to Chromie Pro for:**\n"
             f"• ♾️ Unlimited events\n"
             f"• 💎 Premium features\n"

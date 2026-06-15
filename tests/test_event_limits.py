@@ -86,6 +86,18 @@ def test_pro_is_unlimited():
     assert "limit reached" not in msg.lower(), msg
 
 
+def test_grandfathered_over_limit_message_is_friendly():
+    # Free server still holding 3 (old max) under the new cap of 1.
+    msg, _ = _add(_channel_state(3), voted=False, pro=False)
+    assert "above the new Free limit" in msg, msg
+    assert "stay put" in msg, msg
+    assert "3/1" not in msg, "must not show the bug-looking ratio"
+    # Supporter server still holding 5 (old max) under the new cap of 3.
+    msg, _ = _add(_channel_state(5), voted=True, pro=False)
+    assert "above the new Supporter limit" in msg, msg
+    assert "5/3" not in msg, msg
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):
