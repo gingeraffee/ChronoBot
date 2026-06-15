@@ -1,0 +1,84 @@
+{
+  "_comment": "Synthetic pre-migration (v1) ChronoBot state covering edge cases.",
+  "guilds": {
+    "1001": {
+      "event_channel_id": 555001,
+      "pinned_message_id": 666001,
+      "mention_role_id": 777001,
+      "events": [
+        {"name": "Launch Day", "timestamp": 1800000000, "milestones": [30, 7, 1], "owner_user_id": 42},
+        {"name": "Beta Close", "timestamp": 1790000000, "milestones": [7]}
+      ],
+      "welcomed": true,
+      "event_channel_set_by": 42,
+      "event_channel_set_at": "2026-01-01T00:00:00",
+      "theme": "football",
+      "countdown_title_override": "Our Big Day",
+      "countdown_description_override": null,
+      "default_milestones": [30, 14, 7, 1],
+      "templates": {"party": {"name": "Party", "milestones": [7]}},
+      "digest": {"enabled": true, "channel_id": 555001, "last_sent_date": "2026-06-01"},
+      "supporter": {"last_vote_at": null, "vote_until": null},
+      "pro": {"pro_active": true, "pro_until": "2027-01-01T00:00:00", "grace_until": null, "migration_mode": false},
+      "auto_delete_milestones": true,
+      "time_unit": "days",
+      "timezone": "America/Chicago"
+    },
+    "1002": {
+      "event_channel_id": null,
+      "pinned_message_id": null,
+      "mention_role_id": null,
+      "events": [
+        {"name": "Orphan Event", "timestamp": 1810000000, "milestones": [1]}
+      ],
+      "welcomed": false,
+      "theme": "classic",
+      "templates": {},
+      "digest": {"enabled": false, "channel_id": null, "last_sent_date": null},
+      "supporter": {"last_vote_at": null, "vote_until": null},
+      "pro": {"pro_active": false, "pro_until": null, "grace_until": null, "migration_mode": false},
+      "auto_delete_milestones": true,
+      "time_unit": "discord",
+      "timezone": "UTC"
+    },
+    "1003": {
+      "event_channel_id": null,
+      "pinned_message_id": null,
+      "mention_role_id": null,
+      "events": [],
+      "welcomed": true,
+      "theme": "classic",
+      "templates": {},
+      "digest": {"enabled": false, "channel_id": null, "last_sent_date": null},
+      "supporter": {"last_vote_at": null, "vote_until": null},
+      "pro": {"pro_active": false, "pro_until": null, "grace_until": null, "migration_mode": false},
+      "auto_delete_milestones": true,
+      "time_unit": "discord",
+      "timezone": "UTC"
+    },
+    "1004": {
+      "event_channel_id": 555004,
+      "events": [{"name": "Legacy Event", "timestamp": 1820000000}],
+      "welcomed": true,
+      "pro": {"pro_active": false}
+    },
+    "1005": {
+      "_schema_version": 2,
+      "channels": {
+        "555005": {
+          "pinned_message_id": 666005,
+          "events": [{"name": "Already Migrated", "timestamp": 1830000000}],
+          "theme": "basketball",
+          "timezone": "Europe/London"
+        }
+      },
+      "welcomed": true,
+      "templates": {},
+      "supporter": {"last_vote_at": null, "vote_until": null},
+      "pro": {"pro_active": true, "pro_until": "2027-06-01T00:00:00"}
+    }
+  },
+  "user_links": {
+    "42": 1001
+  }
+}

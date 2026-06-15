@@ -665,6 +665,11 @@ def get_guild_state(guild_id: int) -> dict:
             },
             "auto_delete_milestones": True,
             "time_unit": "discord",
+
+            # Per-channel countdowns scaffolding (see migrate_per_channel.py).
+            # Legacy fields above stay for now; the command sweep moves event/
+            # display data into per-channel buckets here.
+            "channels": {},
         }
 
     else:
@@ -685,7 +690,90 @@ def get_guild_state(guild_id: int) -> dict:
         guilds[gid].setdefault("pro", {"pro_active": False, "pro_until": None, "grace_until": None, "migration_mode": False})
         guilds[gid].setdefault("auto_delete_milestones", True)
         guilds[gid].setdefault("time_unit", "discord")
+        guilds[gid].setdefault("channels", {})  # per-channel countdowns scaffolding
     return guilds[gid]
+
+
+# ==========================
+# PER-CHANNEL COUNTDOWNS — accessor layer
+# ==========================
+# Data model: each guild has a `channels` dict mapping a channel id (str) to a
+# per-channel "bucket" holding that channel's own countdown (events, pinned
+# message, theme, timezone, digest, etc.). Billing (pro/supporter), the shared
+# template library, and `welcomed` stay at the guild level. See
+# migrate_per_channel.py for the one-time guild->per-channel migration.
+#
+# Gating: 1 countdown channel is free (identical to the old single-countdown
+# behavior); additional channels require ChronoBot Plus (is_pro). A channel that
+# already exists is always editable, even if the guild later drops below Plus.
+
+FREE_CHANNEL_LIMIT = 1  # free servers get exactly one countdown channel
+
+
+def _default_channel_state() -> dict:
+    """A fresh per-channel countdown bucket with sensible defaults."""
+    return {
+        "pinned_message_id": None,
+        "mention_role_id": None,
+        "events": [],
+        "event_channel_set_by": None,
+        "event_channel_set_at": None,
+        "theme": DEFAULT_THEME_ID,
+        "countdown_title_override": None,
+        "countdown_description_override": None,
+        "default_milestones": DEFAULT_MILESTONES.copy(),
+        "digest": {"enabled": False, "channel_id": None, "last_sent_date": None},
+        "auto_delete_milestones": True,
+        "time_unit": "discord",
+        "timezone": "UTC",
+    }
+
+
+def get_channel_state(guild_id: int, channel_id: int) -> dict:
+    """
+    Return the per-channel countdown bucket for (guild_id, channel_id),
+    creating it with defaults if it does not exist. Existing buckets are
+    backfilled with any newly-added fields (so older saved states stay valid).
+    """
+    guild = get_guild_state(guild_id)
+    channels = guild.setdefault("channels", {})
+    cid = str(channel_id)
+    if cid not in channels:
+        channels[cid] = _default_channel_state()
+    else:
+        for key, default in _default_channel_state().items():
+            channels[cid].setdefault(key, default)
+    return channels[cid]
+
+
+def iter_channel_states(guild_state: dict):
+    """
+    Yield (channel_id:int, channel_state) for every real countdown channel in a
+    guild. Skips the non-numeric "unassigned" sentinel bucket the migration uses
+    to preserve events that never had a channel set.
+    """
+    for cid, cs in guild_state.get("channels", {}).items():
+        if isinstance(cid, str) and cid.isdigit():
+            yield int(cid), cs
+
+
+def count_countdown_channels(guild_state: dict) -> int:
+    """Number of real (numeric-keyed) countdown channels in a guild."""
+    return sum(1 for cid in guild_state.get("channels", {})
+               if isinstance(cid, str) and cid.isdigit())
+
+
+def can_add_countdown_channel(guild_state: dict, channel_id: int) -> bool:
+    """
+    Whether a countdown can be set up in `channel_id`. Always True if the channel
+    is already a countdown channel; otherwise free servers are capped at
+    FREE_CHANNEL_LIMIT and ChronoBot Plus (is_pro) is unlimited.
+    """
+    if str(channel_id) in guild_state.get("channels", {}):
+        return True
+    if is_pro(guild_state):
+        return True
+    return count_countdown_channels(guild_state) < FREE_CHANNEL_LIMIT
 
 
 def get_user_links() -> dict:

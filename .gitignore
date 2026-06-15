@@ -3,3 +3,16 @@ __pycache__/
 *.pyo
 .env
 .claude/worktrees/funny-sutherland/
+
+# Production data — NEVER commit. Contains all 600 servers' configs + Pro/subscription data.
+chromie_state.json
+*.bak
+*.bak.*
+chromie_state*.json
+!tests/fixtures/*.json
+
+# Transfer artifacts holding production data (base64 blob, raw dumps, Word docs) — NEVER commit.
+state_b64.txt
+state_raw.txt
+*.b64
+*.docx
