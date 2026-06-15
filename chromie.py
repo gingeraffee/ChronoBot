@@ -84,7 +84,7 @@ async def maybe_vote_nudge(interaction: discord.Interaction, reason: str) -> Non
     msg = (
         f"💜 {reason}\n"
         "Voting unlocks supporter perks:\n"
-        "• /theme • /milestones advanced • /milestones autodelete • /template save/load • /banner set • /digest enable"
+        "• 5 events • premium themes (`/countdown`) • event banners (`/event`)"
     )
 
     # Use followup if already responded
@@ -401,13 +401,10 @@ State structure (high level):
 EVENT_START_GRACE_SECONDS = 60 * 60  # 1 hour: announce if bot wakes up within 1 hour after start
 
 PREMIUM_PERKS_TEXT = (
-    "Voting unlocks:\n"
-    "• /theme (premium themes)\n"
-    "• /milestones advanced\n"
-    "• /milestones autodelete\n"
-    "• /template save + /template load\n"
-    "• /banner set\n"
-    "• /digest enable"
+    "Voting unlocks (free, 12 hours):\n"
+    "• 5 events (vs 3)\n"
+    "• premium themes — `/countdown` → Theme\n"
+    "• event banners — `/event` → Banner"
 )
 
 class VoteRequired(app_commands.CheckFailure):
@@ -1387,23 +1384,19 @@ async def send_onboarding_for_guild(guild: discord.Guild):
         "I'm **Chromie** — your server's confident little timekeeper. I pin a clean countdown list and post reminders "
         "so nobody has to do the mental math (or the panic).\n\n"
         "**⚡ Quick start (30 seconds):**\n"
-        "1) In your events channel: `/seteventchannel`\n"
-        "2) Set your timezone: `/timezone_set`\n"
-        "3) Add an event: `/addevent date: 04/12/2026 time: 09:00 name: Game Night 🎲`\n\n"
+        "1) In the channel you want the countdown: `/seteventchannel`\n"
+        "2) Add an event: `/addevent date: 04/12/2026 time: 09:00 name: Game Night 🎲`\n"
+        "3) Fine-tune anytime with the hubs below.\n\n"
         "**🧭 Core commands:**\n"
-        "• `/listevents` (shows event numbers)\n"
-        "• `/eventinfo index:` (details)\n"
-        "• `/editevent` • `/removeevent`\n"
-        "• `/remindall` (manual reminder)\n"
-        "• `/silence` (pause reminders without deleting)\n"
-        "• `/timeformat` (show time as days, weeks, or detailed breakdown)\n\n"
+        "• `/listevents` • `/nextevent` • `/remindall`\n"
+        "• `/event` — manage events (edit, delete, milestones, owner, repeat, banner, silence)\n"
+        "• `/countdown` — channel settings (theme, timezone, time format, mention role, digest)\n\n"
         "**🔔 Reminders & mentions:**\n"
-        f"Milestone reminders post in your event channel ({milestone_str} by default). "
-        "Timezone is **America/Chicago**.\n"
-        "Want role pings? Use `/setmentionrole` (clear with `/clearmentionrole`).\n"
-        "Want to assign an event? Use `/seteventowner` (clear with `/cleareventowner`).\n\n"
+        f"Milestone reminders post in your countdown channel ({milestone_str} by default). "
+        "Each channel has its own timezone (set it in `/countdown`).\n"
+        "Role pings, owner assignment, and per-event owner DMs all live in `/event` and `/countdown`.\n\n"
         "**🛠️ Troubleshooting:**\n"
-        "Run `/healthcheck` — it shows your configured channel + whether I can view/send/embed/read history/pin.\n"
+        "Run `/healthcheck` — it shows each countdown channel + whether I can view/send/embed/read history/pin.\n"
         "(Past events auto-remove after they pass so the list stays tidy.)\n\n"
         "**More help:** `/chronohelp` (check out Tiers & Pricing!)\n\n"
         f"FAQ: {FAQ_URL}\n"
@@ -1424,21 +1417,19 @@ async def send_onboarding_for_guild(guild: discord.Guild):
         "Chromie is free. Voting on Top.gg helps it grow — and unlocks bonus features for 12 hours.\n\n"
         "**What you get:**\n"
         "• 5 events (vs 3 for Free)\n"
-        "• `/theme` — 14 premium themes (sports, seasonal, minimal, etc.)\n"
-        "• `/banner set` — custom event banner images\n"
-        "• `/milestones advanced` — server-wide milestone schedules\n"
-        "• `/milestones autodelete` — keep milestone announcements permanently\n\n"
+        "• 14 premium themes (`/countdown` → Theme)\n"
+        "• Custom event banners (`/event` → Banner)\n\n"
         "**How to unlock:**\n"
         "Run `/vote` to get the link. Voting takes 10 seconds and helps Chromie grow!\n\n"
         "**💎 Chromie Pro ($2.99/month)**\n"
         "For power users who need unlimited events + advanced automation:\n"
         "• ♾️ Unlimited events (no cap)\n"
-        "• 🔁 Recurring event reminders (`/setrepeat`)\n"
+        "• 📌 Multiple countdown channels (each its own theme/timezone/events)\n"
+        "• 🔁 Recurring event reminders (`/event` → Repeat)\n"
         "• 📋 Event templates (`/template save`, `/template load`)\n"
-        "• 📑 Duplicate events (`/dupeevent`)\n"
-        "• 📊 Weekly digest summaries (`/digest enable`)\n"
+        "• 📑 Duplicate events (`/event` → Duplicate)\n"
+        "• 📊 Weekly digest summaries (`/countdown` → Weekly digest)\n"
         "• 🎨 All Supporter features (permanent)\n"
-        "• 📌 Multiple countdown boards\n"
         "• 🏆 Priority support\n\n"
         "Subscribe via my Discord Store. Pro unlocks for your entire server!\n\n"
         "If anything seems stuck after voting, run `/vote` again (Top.gg can take a moment to reflect your vote)."
@@ -1696,60 +1687,58 @@ HELP_PAGES = {
             "Use the dropdown to browse commands by category."
         ),
         "lines": [
-            "`/seteventchannel` — set the pinned countdown channel",
+            "`/seteventchannel` — turn this channel into a countdown channel",
             "`/addevent` — add an event",
-            "`/listevents` — list events + index numbers",
+            "`/event` — manage events (edit, milestones, owner, repeat, …)",
+            "`/countdown` — channel settings (theme, timezone, format, …)",
             "`/vote` — check your tier + unlock Supporter",
-            "`/update_countdown` — force refresh (troubleshooting)",
         ],
     },
     "events": {
         "title": "Events",
-        "desc": "Create, view, edit, and organize events.",
+        "desc": "Create, view, and manage events. Everything per countdown channel.",
         "lines": [
-            "`/addevent` — add an event",
-            "`/listevents` — list all events",
+            "`/addevent` — add an event (fast)",
+            "`/listevents` — list this channel's events",
             "`/nextevent` — show next upcoming event",
-            "`/eventinfo index:` — details for one event",
-            "`/editevent index:` — edit name/date/time",
-            "`/dupeevent index:` — 💎 duplicate an event (Pro)",
-            "`/removeevent index:` — delete an event",
+            "`/event` — open the event manager:",
+            "   • edit name / date / time, delete",
+            "   • milestones, reminder time, silence",
+            "   • owner + owner-DM opt-in",
+            "   • 💎 duplicate, 💎 repeat, banner",
         ],
     },
     "reminders": {
         "title": "Reminders",
-        "desc": "Milestones + manual reminders + repeating reminders + timezone settings.",
+        "desc": "Milestones, manual reminders, repeats, reminder times — all in `/event`.",
         "lines": [
-            "`/remindall index:` — post a reminder now",
-            "`/setmilestones index: milestones:` — custom milestone days",
-            "`/resetmilestones index:` — restore default milestones",
-            "`/silence index:` — stop reminders for an event",
-            "`/setrepeat index: every_days:` — 💎 repeat reminders (Pro)",
-            "`/clearrepeat index:` — 💎 turn repeat off (Pro)",
-            "`/timezone_set timezone:` — set server timezone",
-            "`/timezone_view` — view current timezone",
-            "`/editevent_reminder index: reminder_time:` — custom reminder time",
-            "`/clear_reminder_time index:` — remove custom reminder time",
+            "`/remindall` — post a reminder now (defaults to next event)",
+            "`/event` → Milestones — custom milestone days / reset",
+            "`/event` → Reminder time — day-of reminder time / clear",
+            "`/event` → Silence — pause an event's reminders",
+            "`/event` → Repeat — 💎 recurring reminders (Pro)",
+            "`/countdown` → Timezone — set this channel's timezone",
+            "`/countdown` → Mention role — who gets pinged",
         ],
     },
     "customize": {
         "title": "Customization",
-        "desc": "Make the pinned countdown match your server vibe.",
+        "desc": "Make each channel's countdown match your vibe — all in `/countdown`.",
         "lines": [
-            "`/theme` — change the countdown theme",
-            "`/banner set` — set a banner image",
-            "`/banner clear` — remove the banner",
-            "`/template save` — 💎 save event as template (Pro)",
-            "`/template load` — 💎 load event from template (Pro)",
-            "`/digest enable` — 💎 weekly event digest (Pro)",
+            "`/countdown` → Theme — change the countdown theme",
+            "`/countdown` → Time format — discord / days / weeks / detailed",
+            "`/countdown` → Title / Description — 💎 custom embed text (Pro)",
+            "`/countdown` → Weekly digest — 💎 weekly summary (Pro)",
+            "`/event` → Banner — per-event banner image",
+            "`/template save` / `/template load` — 💎 event templates (Pro)",
         ],
     },
     "owner": {
         "title": "Owner DMs",
-        "desc": "Assign an owner to an event.",
+        "desc": "Assign an owner to an event and opt them into reminder DMs (off by default).",
         "lines": [
-            "`/seteventowner index: user:` — assign owner",
-            "`/cleareventowner index:` — remove owner",
+            "`/event` → Owner — assign or clear the event owner",
+            "`/event` → Owner DMs — toggle DM reminders for that owner",
         ],
     },
     "tiers": {
@@ -1766,7 +1755,7 @@ HELP_PAGES = {
             "**⭐ Supporter Tier (Vote to unlock - Free!)**",
             "• Up to 5 events",
             "• Everything in Free",
-            "• Custom event banners (`/banner set`)",
+            "• Custom event banners (`/event` → Banner)",
             "• Advanced milestone customization",
             "• Unlock by voting on Top.gg (lasts 12 hours)",
             "• Run `/vote` to get the link!",
@@ -1774,10 +1763,10 @@ HELP_PAGES = {
             "**💎 Chromie Pro ($2.99/month)**",
             "• Unlimited events",
             "• Everything in Supporter (permanent)",
-            "• Recurring event reminders (`/setrepeat`)",
+            "• Recurring event reminders (`/event` → Repeat)",
             "• Event templates (`/template save` + `/template load`)",
-            "• Duplicate events (`/dupeevent`)",
-            "• Weekly digest summaries (`/digest enable`)",
+            "• Duplicate events (`/event` → Duplicate)",
+            "• Weekly digest summaries (`/countdown` → Weekly digest)",
             "• Multiple countdown boards",
             "• Priority support",
             "• Subscribe via Discord Server Subscription",
@@ -1789,8 +1778,8 @@ HELP_PAGES = {
         "lines": [
             "**What you get:**",
             "• 5 events (vs 3 for Free)",
-            "• Custom themes (`/theme`)",
-            "• Event banners (`/banner set`)",
+            "• Custom themes (`/countdown` → Theme)",
+            "• Event banners (`/event` → Banner)",
             "• Advanced milestone customization",
             "",
             "**How to unlock:**",
@@ -1815,10 +1804,10 @@ HELP_PAGES = {
         "lines": [
             "**What's included:**",
             "• ♾️ Unlimited events (no cap!)",
-            "• 🔁 Recurring event reminders (`/setrepeat`, `/clearrepeat`)",
+            "• 🔁 Recurring event reminders (`/event` → Repeat)",
             "• 📋 Event templates (`/template save`, `/template load`)",
-            "• 📑 Duplicate events (`/dupeevent`)",
-            "• 📊 Weekly digest (`/digest enable`)",
+            "• 📑 Duplicate events (`/event` → Duplicate)",
+            "• 📊 Weekly digest (`/countdown` → Weekly digest)",
             "• 🎨 All Supporter features (permanent, no voting needed)",
             "• 📌 Multiple countdown boards per server",
             "• 🏆 Priority support",
@@ -1835,11 +1824,12 @@ HELP_PAGES = {
         "title": "Maintenance",
         "desc": "Config resets + cleanup + diagnostics.",
         "lines": [
-            "`/healthcheck` — check permissions/config",
+            "`/healthcheck` — per-channel permissions/config",
+            "`/update_countdown` — force-refresh this channel's pin",
             "`/resendsetup` — resend onboarding",
-            "`/resetchannel` — clear event channel",
-            "`/purgeevents confirm: YES` — delete all events",
-            "`/archivepast` — manual cleanup (rare)",
+            "`/countdown` → Remove — stop a channel's countdown",
+            "`/purgeevents confirm: YES` — delete this channel's events",
+            "`/archivepast` — remove past events (all channels)",
         ],
     },
     "dm": {
@@ -2484,8 +2474,8 @@ def build_embed_for_channel(channel_state: dict, guild_state: dict) -> discord.E
 
     Per-channel data (events, theme, timezone, title/description overrides,
     time_unit) comes from `channel_state`; the server-level Supporter/Pro status
-    line comes from `guild_state`. Use build_embed_for_guild() for the legacy
-    single-countdown path (it passes the guild dict as both arguments).
+    line comes from `guild_state` (the two are the same dict only for a guild
+    that has not been migrated to the per-channel model).
     """
     layout = get_theme_layout(channel_state) or {}
 
@@ -2623,17 +2613,12 @@ def build_embed_for_channel(channel_state: dict, guild_state: dict) -> discord.E
     return embed
 
 
-def build_embed_for_guild(guild_state: dict) -> discord.Embed:
-    """Legacy single-countdown path: the guild dict holds both the per-channel
-    fields and the server-level status, so it serves as both arguments."""
-    return build_embed_for_channel(guild_state, guild_state)
 
 
 async def rebuild_pinned_message_for_channel(
     channel: discord.TextChannel, channel_state: dict, guild_state: dict
 ):
-    """Rebuild the pinned countdown for ONE channel bucket. The legacy
-    rebuild_pinned_message() wraps this, passing the guild dict as the bucket."""
+    """Rebuild the pinned countdown for ONE channel bucket (unpin old, send + pin new)."""
     sort_events(channel_state)
 
     old_id = channel_state.get("pinned_message_id")
@@ -2679,9 +2664,6 @@ async def rebuild_pinned_message_for_channel(
     return msg
 
 
-async def rebuild_pinned_message(guild_id: int, channel: discord.TextChannel, guild_state: dict):
-    """Legacy single-countdown wrapper around rebuild_pinned_message_for_channel."""
-    return await rebuild_pinned_message_for_channel(channel, guild_state, guild_state)
 
 async def get_or_create_pinned_message_for_channel(
     channel: discord.TextChannel,
@@ -2691,8 +2673,7 @@ async def get_or_create_pinned_message_for_channel(
     allow_create: bool = False,
 ):
     """Per-channel pinned-message resolver. `state_bucket` holds this channel's
-    events + pinned_message_id; `guild_state` is used for the embed status line.
-    The legacy get_or_create_pinned_message() wraps this."""
+    events + pinned_message_id; `guild_state` is used for the embed status line."""
     sort_events(state_bucket)
     pinned_id = state_bucket.get("pinned_message_id")
 
@@ -2833,10 +2814,6 @@ async def get_or_create_pinned_message_for_channel(
     return msg
 
 
-async def get_or_create_pinned_message(guild_id: int, channel: discord.TextChannel, *, allow_create: bool = False):
-    """Legacy single-countdown wrapper around get_or_create_pinned_message_for_channel."""
-    gs = get_guild_state(guild_id)
-    return await get_or_create_pinned_message_for_channel(channel, gs, gs, allow_create=allow_create)
 
 
 async def get_text_channel(channel_id) -> Optional[discord.TextChannel]:
@@ -2982,36 +2959,6 @@ async def refresh_countdown_message_for_channel(
         print(f"[Guild {guild.id}] Failed to edit pinned message: {e}")
 
 
-async def refresh_countdown_message(guild: discord.Guild, guild_state: dict) -> None:
-    ch_id = guild_state.get("event_channel_id")
-    if not ch_id:
-        return
-
-    channel = await get_text_channel(int(ch_id))
-    if channel is None:
-        return
-
-    pinned = await get_or_create_pinned_message(guild.id, channel, allow_create=True)
-    if pinned is None:
-        return
-
-    try:
-        await pinned.edit(embed=build_embed_for_guild(guild_state))
-    except discord.NotFound:
-        gs = get_guild_state(guild.id)
-        if gs.get("pinned_message_id") == pinned.id:
-            gs["pinned_message_id"] = None
-            save_state()
-    except discord.Forbidden:
-        missing = missing_channel_perms(channel, channel.guild)
-        await notify_owner_missing_perms(
-            channel.guild,
-            channel,
-            missing=missing,
-            action="edit/update the pinned countdown message",
-        )
-    except discord.HTTPException as e:
-        print(f"[Guild {guild.id}] Failed to edit pinned message: {e}")
 
 # ==========================
 # AUTOCOMPLETE HELPERS
@@ -3617,7 +3564,7 @@ def format_events_list(guild_state: dict) -> str:
     return "\n".join(lines)
 
 
-@bot.tree.command(name="seteventchannel", description="Set this channel as the event countdown channel.")
+@bot.tree.command(name="seteventchannel", description="Turn this channel into a countdown channel.")
 @app_commands.default_permissions(manage_guild=True)  # ✅ hides command from non-manage-server users
 @app_commands.checks.has_permissions(manage_guild=True)  # ✅ runtime enforcement
 @app_commands.guild_only()
@@ -3772,6 +3719,7 @@ def build_countdown_settings_embed(cs: dict, guild_state: dict, channel_id: int)
         desc_txt = "—"
     digest = cs.get("digest") or {}
     digest_txt = "✅ On" if digest.get("enabled") else "🔕 Off"
+    autodelete_txt = "✅ After 24h" if cs.get("auto_delete_milestones", True) else "🔕 Keep forever"
     pro = is_pro(guild_state)
     lock = "" if pro else " 🔒"
 
@@ -3784,6 +3732,7 @@ def build_countdown_settings_embed(cs: dict, guild_state: dict, channel_id: int)
     e.add_field(name="🌍 Timezone", value=f"`{tz}`", inline=True)
     e.add_field(name="⏱️ Time format", value=_TIME_UNIT_LABELS.get(unit, unit), inline=True)
     e.add_field(name="🔔 Mention role", value=role_txt, inline=True)
+    e.add_field(name="🧹 Auto-delete posts", value=autodelete_txt, inline=True)
     e.add_field(name=f"📝 Title{lock}", value=title_ov, inline=True)
     e.add_field(name=f"💬 Description{lock}", value=desc_txt, inline=True)
     e.add_field(name=f"📊 Weekly digest{lock}", value=digest_txt, inline=True)
@@ -4080,6 +4029,39 @@ class CountdownRemoveView(discord.ui.View):
         self.add_item(CountdownBackButton())
 
 
+class CountdownAutoDeleteToggle(discord.ui.Button):
+    def __init__(self, enable: bool):
+        self.enable = enable
+        super().__init__(
+            label="Auto-delete after 24h" if enable else "Keep forever",
+            emoji="🧹" if enable else "📌",
+            style=discord.ButtonStyle.success if enable else discord.ButtonStyle.secondary,
+            row=0,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        view = self.view
+        gid, cid = view.guild_id, view.channel_id
+        cs = get_channel_state(gid, cid)
+        cs["auto_delete_milestones"] = self.enable
+        save_state()
+        await _countdown_apply(
+            interaction, gid, cid,
+            confirm=("✅ Milestone/reminder posts will auto-delete after 24h."
+                     if self.enable else "✅ Milestone/reminder posts will stay forever."),
+        )
+
+
+class CountdownAutoDeleteView(discord.ui.View):
+    def __init__(self, guild_id: int, channel_id: int):
+        super().__init__(timeout=300)
+        self.guild_id = guild_id
+        self.channel_id = channel_id
+        self.add_item(CountdownAutoDeleteToggle(True))
+        self.add_item(CountdownAutoDeleteToggle(False))
+        self.add_item(CountdownBackButton())
+
+
 class CountdownSettingSelect(discord.ui.Select):
     def __init__(self):
         options = [
@@ -4087,6 +4069,7 @@ class CountdownSettingSelect(discord.ui.Select):
             discord.SelectOption(label="Timezone", value="timezone", emoji="🌍", description="Timezone for this channel"),
             discord.SelectOption(label="Time format", value="timeformat", emoji="⏱️", description="How the countdown displays"),
             discord.SelectOption(label="Mention role", value="role", emoji="🔔", description="Role pinged on milestones"),
+            discord.SelectOption(label="Auto-delete posts", value="autodelete", emoji="🧹", description="Keep or remove milestone/reminder posts"),
             discord.SelectOption(label="Title (Pro)", value="title", emoji="📝", description="Custom pinned-embed title"),
             discord.SelectOption(label="Description (Pro)", value="description", emoji="💬", description="Custom intro text"),
             discord.SelectOption(label="Weekly digest (Pro)", value="digest", emoji="📊", description="Weekly summary post"),
@@ -4122,6 +4105,20 @@ class CountdownSettingSelect(discord.ui.Select):
                     color=EMBED_COLOR,
                 ),
                 view=CountdownRoleView(gid, cid),
+            )
+        elif choice == "autodelete":
+            cur = get_channel_state(gid, cid).get("auto_delete_milestones", True)
+            await interaction.response.edit_message(
+                embed=discord.Embed(
+                    title="🧹 Auto-delete posts",
+                    description=(
+                        f"Currently **{'auto-delete after 24h' if cur else 'keep forever'}**.\n"
+                        "Controls whether milestone + reminder announcement messages are "
+                        "cleaned up automatically."
+                    ),
+                    color=EMBED_COLOR,
+                ),
+                view=CountdownAutoDeleteView(gid, cid),
             )
         elif choice == "timezone":
             await interaction.response.send_modal(CountdownTimezoneModal(gid, cid, interaction))
@@ -4924,7 +4921,7 @@ async def add_event_core(guild, guild_state, cs, cid, *, actor, member, date, ti
                 f"• 🗳️ **Vote on Top.gg** → Get 5 events (resets every 12 hours)\n"
                 f"  Use `/vote` to get the link!\n"
                 f"• 💎 **Chromie Pro** → Unlimited events + premium features\n\n"
-                f"Or delete an event with `/removeevent` first."
+                f"Or delete an event from `/event` first."
             ), False
         return (
             f"❌ **Event limit reached!**\n\n"
@@ -4933,7 +4930,7 @@ async def add_event_core(guild, guild_state, cs, cid, *, actor, member, date, ti
             f"• ♾️ Unlimited events\n"
             f"• 💎 Premium features\n"
             f"• 🎨 Advanced customization\n\n"
-            f"Or delete an event with `/removeevent` first."
+            f"Or delete an event from `/event` first."
         ), False
 
     try:
@@ -5077,7 +5074,7 @@ async def addevent(interaction: discord.Interaction, date: str, time: str, name:
 
 
 
-@bot.tree.command(name="listevents", description="List all events for this server.")
+@bot.tree.command(name="listevents", description="List this channel's events.")
 @app_commands.guild_only()
 async def listevents(interaction: discord.Interaction):
     guild = interaction.guild
@@ -5136,245 +5133,13 @@ async def nextevent(interaction: discord.Interaction):
     )
 
 
-@bot.tree.command(name="eventinfo", description="Show details for one event.")
-@app_commands.describe(index="The number shown in /listevents (1, 2, 3, ...)")
-@app_commands.autocomplete(index=event_index_autocomplete)
-@app_commands.guild_only()
-async def eventinfo(interaction: discord.Interaction, index: int):
-    guild = interaction.guild
-    assert guild is not None
-    g = get_guild_state(guild.id)
-    _cid, cs = resolve_event_channel(g, interaction.channel_id)
-    if cs is None:
-        await interaction.response.send_message(
-            no_channel_guidance(g, "/eventinfo"), ephemeral=True
-        )
-        return
-    ev = get_event_by_index(cs, index)
-    if not ev:
-        await interaction.response.send_message("Invalid index. Use `/listevents` to see event numbers.", ephemeral=True)
-        return
-
-    tz = get_guild_timezone(cs)
-    dt = datetime.fromtimestamp(ev["timestamp"], tz=tz)
-    now = datetime.now(tz)
-    desc, _, passed = compute_time_left(now, dt)
-    miles = ", ".join(str(x) for x in ev.get("milestones", DEFAULT_MILESTONES))
-    repeat_every = ev.get("repeat_every_days")
-    repeat_note = "off"
-    if isinstance(repeat_every, int) and repeat_every > 0:
-        repeat_note = f"every {repeat_every} day(s) (anchor: {ev.get('repeat_anchor_date')})"
-
-    silenced = ev.get("silenced", False)
-    owner_id = ev.get("owner_user_id")
-    owner_note = f"<@{owner_id}>" if owner_id else "none"
-    creator_name = ev.get("created_by_name") or ev.get("owner_name") or "unknown"
-    creator_id = ev.get("created_by_user_id") or ev.get("owner_user_id")
-    creator_note = f"{creator_name}" + (f" (ID: {creator_id})" if creator_id else "")
-    
-    # Show custom reminder time if set
-    reminder_time = ev.get("reminder_time")
-    reminder_note = reminder_time if reminder_time else "event time"
-
-    await interaction.response.send_message(
-        f"**Event #{index}: {ev['name']}**\n"
-        f"🗓️ {dt.strftime('%B %d, %Y at %I:%M %p %Z')}\n"
-        f"⏱️ {desc} remaining\n"
-        f"📝 Created by: {creator_note}\n"
-        f"👤 Owner (DM): {owner_note}\n"
-        f"🔔 Milestones: {miles}\n"
-        f"🕐 Reminder Time: {reminder_note}\n"
-        f"🔁 Repeat: {repeat_note}\n"
-        f"🔕 Silenced: {'yes' if silenced and not passed else 'no'}",
-        ephemeral=True,
-        allowed_mentions=discord.AllowedMentions.none(),
-    )
 
 
 
-@bot.tree.command(name="removeevent", description="Remove an event by its list number (from /listevents).")
-@app_commands.describe(index="The number shown in /listevents (1, 2, 3, ...)")
-@app_commands.autocomplete(index=event_index_autocomplete)
-@app_commands.checks.has_permissions(manage_guild=True)
-@app_commands.guild_only()
-async def removeevent(interaction: discord.Interaction, index: int):
-    guild = interaction.guild
-    assert guild is not None
-    
-    await interaction.response.defer(ephemeral=True)
-    guild_state = get_guild_state(guild.id)
-    cid, cs = resolve_event_channel(guild_state, interaction.channel_id)
-    if cs is None:
-        await interaction.edit_original_response(content=no_channel_guidance(guild_state, "/removeevent"))
-        return
-    sort_events(cs)
-    events = cs.get("events", [])
-
-    if not events:
-        await interaction.edit_original_response(content="There are no events to remove.")
-        return
-
-    if index < 1 or index > len(events):
-        await interaction.edit_original_response(content=f"Index must be between 1 and {len(events)}.")
-        return
-
-    ev = events.pop(index - 1)
-    save_state()
-
-    ch = await get_text_channel(cid)
-    if ch:
-        await rebuild_pinned_message_for_channel(ch, cs, guild_state)
-
-    await interaction.edit_original_response(content=f"🗑 Removed event **{ev['name']}**.")
 
 
-@bot.tree.command(name="editevent", description="Edit an event's name/date/time.")
-@app_commands.describe(
-    index="The number shown in /listevents (1, 2, 3, ...)",
-    name="New name (optional)",
-    date="New date MM/DD/YYYY (optional)",
-    time="New time 24-hour HH:MM (optional)",
-)
-@app_commands.autocomplete(index=event_index_autocomplete)
-@app_commands.checks.has_permissions(manage_guild=True)
-@app_commands.guild_only()
-async def editevent(interaction: discord.Interaction, index: int, name: Optional[str] = None, date: Optional[str] = None, time: Optional[str] = None):
-    guild = interaction.guild
-    assert guild is not None
-
-    await interaction.response.defer(ephemeral=True)
-
-    g = get_guild_state(guild.id)
-    cid, cs = resolve_event_channel(g, interaction.channel_id)
-    if cs is None:
-        await interaction.edit_original_response(content=no_channel_guidance(g, "/editevent"))
-        return
-    tz = get_guild_timezone(cs)
-    ev = get_event_by_index(cs, index)
-    if not ev:
-        await interaction.edit_original_response(content="Invalid index. Use `/listevents`.")
-        return
-
-    if name and name.strip():
-        ev["name"] = name.strip()
-
-    if date or time:
-        current_dt = datetime.fromtimestamp(ev["timestamp"], tz=tz)
-        new_date = current_dt.strftime("%m/%d/%Y")
-        new_time = current_dt.strftime("%H:%M")
-
-        if date and date.strip():
-            new_date = date.strip()
-        if time and time.strip():
-            new_time = time.strip()
-
-        try:
-            dt = datetime.strptime(f"{new_date} {new_time}", "%m/%d/%Y %H:%M").replace(tzinfo=tz)
-        except ValueError:
-            await interaction.edit_original_response(content=
-                "I couldn't understand that date/time.\nUse MM/DD/YYYY + 24-hour HH:MM."
-            )
-            return
-
-        if dt <= datetime.now(tz):
-            await interaction.edit_original_response(content=
-                "That date/time is in the past. Please choose a future time."
-            )
-            return
-
-        ev["timestamp"] = int(dt.timestamp())
-        ev["announced_milestones"] = []
-        ev["announced_repeat_dates"] = []
-
-    sort_events(cs)
-    save_state()
-
-    ch = await get_text_channel(cid)
-    if ch:
-        await refresh_countdown_message_for_channel(guild, ch, cs, g)
-
-    dt_final = datetime.fromtimestamp(ev["timestamp"], tz=get_guild_timezone(cs))
-    await interaction.edit_original_response(content=
-        f"✅ Updated event #{index}: **{ev['name']}**\n"
-        f"🗓️ {dt_final.strftime('%B %d, %Y at %I:%M %p %Z')}"
-    )
 
 
-@bot.tree.command(name="dupeevent", description="[Pro] Duplicate an event (optional time/name).")
-@require_pro("Event Duplication")
-@app_commands.describe(
-    index="The number shown in /listevents (1, 2, 3, ...)",
-    date="New date MM/DD/YYYY",
-    time="New time 24-hour HH:MM (optional; defaults to original time)",
-    name="New name (optional; defaults to original name)",
-)
-@app_commands.autocomplete(index=event_index_autocomplete)
-@app_commands.checks.has_permissions(manage_guild=True)
-@app_commands.guild_only()
-async def dupeevent(interaction: discord.Interaction, index: int, date: str, time: Optional[str] = None, name: Optional[str] = None):
-    guild = interaction.guild
-    assert guild is not None
-
-    await interaction.response.defer(ephemeral=True)
-
-    g = get_guild_state(guild.id)
-    guild_state = g
-    sort_events(g)
-    ev = get_event_by_index(g, index)
-    if not ev:
-        await interaction.edit_original_response(content="Invalid index. Use `/listevents`.")
-        return
-
-    orig_dt = datetime.fromtimestamp(ev["timestamp"], tz=tz)
-    use_time = time.strip() if time and time.strip() else orig_dt.strftime("%H:%M")
-    use_name = name.strip() if name and name.strip() else ev["name"]
-
-    try:
-        dt = datetime.strptime(f"{date.strip()} {use_time}", "%m/%d/%Y %H:%M").replace(tzinfo=tz)
-    except ValueError:
-        await interaction.edit_original_response(content="Invalid date/time. Use MM/DD/YYYY + 24-hour HH:MM.")
-        return
-
-    if dt <= datetime.now(tz):
-        await interaction.edit_original_response(content="That date/time is in the past. Please choose a future time.")
-        return
-
-    maker = guild.get_member(interaction.user.id)
-    maker_name = maker.display_name if maker else interaction.user.name
-
-
-    new_ev = {
-        "name": use_name,
-        "timestamp": int(dt.timestamp()),
-        "milestones": ev.get("milestones", DEFAULT_MILESTONES.copy()).copy(),
-        "announced_milestones": [],
-        "repeat_every_days": ev.get("repeat_every_days"),
-        "repeat_anchor_date": None,
-        "announced_repeat_dates": [],
-        "silenced": ev.get("silenced", False),
-        "start_announced": False,
-        "banner_url": ev.get("banner_url"),
-        "created_by_user_id": int(interaction.user.id),
-        "created_by_name": maker_name,
-        "owner_user_id": int(interaction.user.id),
-        "owner_name": maker_name,
-
-    }
-
-    g["events"].append(new_ev)
-    sort_events(g)
-    save_state()
-
-    guild_state = g
-    ch_id = g.get("event_channel_id")
-    if ch_id:
-        ch = await get_text_channel(ch_id)
-        if ch:
-            await refresh_countdown_message(guild, guild_state)
-
-    await interaction.edit_original_response(content=
-        f"🧬 Duplicated event #{index} → added **{new_ev['name']}** on {dt.strftime('%B %d, %Y at %I:%M %p %Z')}."
-    )
 
 
 @bot.tree.command(name="remindall", description="Send a notification to the channel about an event.")
@@ -5431,7 +5196,7 @@ async def remindall(interaction: discord.Interaction, index: Optional[int] = Non
         return
 
     if ev.get("silenced", False):
-        await interaction.edit_original_response(content="That event is currently silenced (use `/silence` to toggle it back on).")
+        await interaction.edit_original_response(content="That event is currently silenced (use `/event` → Silence to toggle it back on).")
         return
 
     desc, _, passed = compute_time_left(now, dt)
@@ -5471,130 +5236,10 @@ async def remindall(interaction: discord.Interaction, index: Optional[int] = Non
     await maybe_vote_nudge(interaction, "Reminder delivered. If you like Chromie’s vibe, a Top.gg vote unlocks supporter tools.")
 
 
-@bot.tree.command(name="setmilestones", description="Set custom milestone days for an event.")
-@app_commands.describe(
-    index="The number shown in /listevents (1, 2, 3, ...)",
-    milestones="Comma/space-separated days (example: 100, 50, 30, 14, 7, 2, 1, 0)",
-)
-@app_commands.autocomplete(index=event_index_autocomplete)
-@app_commands.checks.has_permissions(manage_guild=True)
-@app_commands.guild_only()
-async def setmilestones(interaction: discord.Interaction, index: int, milestones: str):
-    guild = interaction.guild
-    assert guild is not None
-    g = get_guild_state(guild.id)
-
-    ev = get_event_by_index(g, index)
-    if not ev:
-        await interaction.response.send_message("Invalid index. Use `/listevents`.", ephemeral=True)
-        return
-
-    parsed = parse_milestones(milestones)
-    if not parsed:
-        await interaction.response.send_message(
-            "Invalid milestones. Use numbers like: `100, 50, 30, 14, 7, 2, 1, 0`.",
-            ephemeral=True,
-        )
-        return
-
-    ev["milestones"] = parsed
-    ev["announced_milestones"] = []
-    save_state()
-
-    await interaction.response.send_message(
-        f"✅ Updated milestones for **{ev['name']}**: {', '.join(str(x) for x in parsed)}",
-        ephemeral=True,
-    )
     
-milestones_group = app_commands.Group(name="milestones", description="Milestone settings (Supporter perk)")
-bot.tree.add_command(milestones_group)
-
-@milestones_group.command(name="advanced", description="Set server default milestones (Supporter perk).")
-@app_commands.describe(
-    milestones="Comma/space-separated days (example: 100, 60, 30, 14, 7, 2, 1, 0)",
-    apply_to_all="Also apply this list to all existing events",
-)
-@require_vote("/milestones advanced")
-@app_commands.checks.has_permissions(manage_guild=True)
-@app_commands.guild_only()
-async def milestones_advanced_cmd(interaction: discord.Interaction, milestones: str, apply_to_all: bool = True):
-    guild = interaction.guild
-    assert guild is not None
-
-    parsed = parse_milestones(milestones)
-    if not parsed:
-        await interaction.response.send_message("Invalid milestones format.", ephemeral=True)
-        return
-
-    g = get_guild_state(guild.id)
-
-    # Capture the old defaults BEFORE we overwrite them
-    old_defaults = g.get("default_milestones")
-    if not isinstance(old_defaults, list) or not old_defaults:
-        old_defaults = DEFAULT_MILESTONES
-
-    g["default_milestones"] = parsed
-
-    updated = 0
-    events = g.get("events", [])
-    if not isinstance(events, list):
-        events = []
-        g["events"] = events
-
-    for ev in events:
-        if not isinstance(ev, dict):
-            continue
-
-        # Always reset announced milestones when changing milestone lists
-        def _apply():
-            nonlocal updated
-            ev["milestones"] = parsed.copy()
-            ev["announced_milestones"] = []
-            updated += 1
-
-        if apply_to_all:
-            _apply()
-        else:
-            # Only update events that were still using the old default list
-            cur = ev.get("milestones")
-            if (not isinstance(cur, list) or not cur) or cur == old_defaults:
-                _apply()
-
-    save_state()
-
-    note = (
-        f"✅ Server default milestones set to: {', '.join(str(x) for x in parsed)}\n"
-        f"Updated **{updated}** existing event(s). "
-    )
-    if not apply_to_all:
-        note += "(Only events using the *previous defaults* were updated — customized events were left alone.)"
-    else:
-        note += "(Applied to all events.)"
-
-    await interaction.response.send_message(note, ephemeral=True)
 
 
-@milestones_group.command(name="autodelete", description="Toggle auto-deletion of milestone announcements (Supporter perk).")
-@app_commands.describe(
-    enabled="True = auto-delete after 24h (default), False = keep milestone messages permanently",
-)
-@require_vote("/milestones autodelete")
-@app_commands.checks.has_permissions(manage_guild=True)
-@app_commands.guild_only()
-async def milestones_autodelete_cmd(interaction: discord.Interaction, enabled: bool):
-    guild = interaction.guild
-    assert guild is not None
 
-    g = get_guild_state(guild.id)
-    g["auto_delete_milestones"] = enabled
-    save_state()
-
-    if enabled:
-        msg = "✅ Milestone auto-delete is now **ON**. Announcement messages will be deleted after 24 hours."
-    else:
-        msg = "✅ Milestone auto-delete is now **OFF**. Announcement messages will stay in the channel permanently."
-
-    await interaction.response.send_message(msg, ephemeral=True)
 
 
 template_group = app_commands.Group(name="template", description="Event templates (Supporter perk)")
@@ -5604,7 +5249,6 @@ bot.tree.add_command(template_group)
 @require_pro("Event Templates")
 @app_commands.describe(index="Event number from /listevents", name="Template name")
 @app_commands.autocomplete(index=event_index_autocomplete)
-@require_vote("/template save")
 @app_commands.checks.has_permissions(manage_guild=True)
 @app_commands.guild_only()
 async def template_save_cmd(interaction: discord.Interaction, index: int, name: str):
@@ -5612,7 +5256,11 @@ async def template_save_cmd(interaction: discord.Interaction, index: int, name: 
     assert guild is not None
 
     g = get_guild_state(guild.id)
-    ev = get_event_by_index(g, index)
+    _cid, cs = resolve_event_channel(g, interaction.channel_id)
+    if cs is None:
+        await interaction.response.send_message(no_channel_guidance(g, "/template save"), ephemeral=True)
+        return
+    ev = get_event_by_index(cs, index)
     if not ev:
         await interaction.response.send_message("Invalid index. Use /listevents.", ephemeral=True)
         return
@@ -5642,7 +5290,6 @@ async def template_save_cmd(interaction: discord.Interaction, index: int, name: 
     time="24-hour HH:MM",
     event_name="Name for the new event",
 )
-@require_vote("/template load")
 @app_commands.checks.has_permissions(manage_guild=True)
 @app_commands.guild_only()
 async def template_load_cmd(interaction: discord.Interaction, name: str, date: str, time: str, event_name: str):
@@ -5650,8 +5297,11 @@ async def template_load_cmd(interaction: discord.Interaction, name: str, date: s
     assert guild is not None
 
     g = get_guild_state(guild.id)
-    guild_state = g
-    tz = get_guild_timezone(guild_state)
+    cid, cs = resolve_event_channel(g, interaction.channel_id)
+    if cs is None:
+        await interaction.response.send_message(no_channel_guidance(g, "/template load"), ephemeral=True)
+        return
+    tz = get_guild_timezone(cs)
     templates = g.get("templates", {})
     key = (name or "").strip().lower()
     tpl = templates.get(key)
@@ -5681,6 +5331,7 @@ async def template_load_cmd(interaction: discord.Interaction, name: str, date: s
         "repeat_anchor_date": None,
         "announced_repeat_dates": [],
         "silenced": bool(tpl.get("silenced", False)),
+        "dm_opt_in": False,
         "start_announced": False,
         "banner_url": None,
         "created_by_user_id": int(interaction.user.id),
@@ -5689,15 +5340,12 @@ async def template_load_cmd(interaction: discord.Interaction, name: str, date: s
         "owner_name": maker_name,
     }
 
-    g["events"].append(new_ev)
-    sort_events(g)
+    cs["events"].append(new_ev)
+    sort_events(cs)
     save_state()
-    guild_state = g
-    ch_id = g.get("event_channel_id")
-    if ch_id:
-        ch = await get_text_channel(int(ch_id))
-        if ch:
-            await refresh_countdown_message(guild, guild_state)
+    ch = await get_text_channel(cid)
+    if ch:
+        await rebuild_pinned_message_for_channel(ch, cs, g)
 
     await interaction.response.send_message(
         f"✅ Created **{event_name}** from template **{tpl.get('display_name', name)}**.",
@@ -5719,310 +5367,23 @@ def _looks_like_image_url(u: str) -> bool:
     img_exts = (".png", ".jpg", ".jpeg", ".gif", ".webp")
     return ("cdn.discordapp.com" in u) or ("media.discordapp.net" in u) or u.lower().split("?")[0].endswith(img_exts)
     
-banner_group = app_commands.Group(name="banner", description="Event banners (Supporter perk)")
-bot.tree.add_command(banner_group)
-
-@banner_group.command(name="set", description="Set a banner image for an event (Supporter perk).")
-@app_commands.describe(index="Event number from /listevents", url="Direct image URL (https://...)")
-@app_commands.autocomplete(index=event_index_autocomplete)
-@require_vote("/banner set")
-@app_commands.checks.has_permissions(manage_guild=True)
-@app_commands.guild_only()
-async def banner_set_cmd(interaction: discord.Interaction, index: int, url: str):
-    guild = interaction.guild
-    assert guild is not None
-
-    g = get_guild_state(guild.id)
-    guild_state = g
-    ev = get_event_by_index(g, index)
-    if not ev:
-        await interaction.response.send_message("Invalid index.", ephemeral=True)
-        return
-
-    u = (url or "").strip()
-    if not (u.startswith("https://") or u.startswith("http://")):
-        await interaction.response.send_message("Banner URL must start with http:// or https://", ephemeral=True)
-        return
-
-    ev["banner_url"] = u
-    save_state()
-    
-    guild_state = g
-    ch_id = g.get("event_channel_id")
-    if ch_id:
-        ch = await get_text_channel(int(ch_id))
-        if ch:
-            await refresh_countdown_message(guild, guild_state)
-
-    await interaction.response.send_message(f"✅ Banner set for event #{index}.", ephemeral=True)
-
-@banner_group.command(name="clear", description="Remove a banner image from an event (Supporter perk).")
-@app_commands.describe(index="Event number from /listevents")
-@app_commands.autocomplete(index=event_index_autocomplete)
-@require_vote("/banner clear")
-@app_commands.checks.has_permissions(manage_guild=True)
-@app_commands.guild_only()
-async def banner_clear_cmd(interaction: discord.Interaction, index: int):
-    guild = interaction.guild
-    assert guild is not None
-
-    g = get_guild_state(guild.id)
-    guild_state = g
-    ev = get_event_by_index(g, index)
-    if not ev:
-        await interaction.response.send_message("Invalid index.", ephemeral=True)
-        return
-
-    # If nothing to clear, be friendly and exit
-    if not ev.get("banner_url"):
-        await interaction.response.send_message(
-            f"🧼 Event #{index} (**{ev.get('name','Event')}**) doesn’t have a banner set.",
-            ephemeral=True,
-        )
-        return
-
-    ev["banner_url"] = None
-    save_state()
-
-    # Refresh pinned embed so the image disappears immediately
-    ch_id = g.get("event_channel_id")
-    if ch_id:
-        ch = await get_text_channel(int(ch_id))
-        if ch:
-            await refresh_countdown_message(guild, guild_state)
-
-    await interaction.response.send_message(
-        f"✅ Banner removed for event #{index} (**{ev.get('name','Event')}**).",
-        ephemeral=True,
-    )
 
 
-@bot.tree.command(name="resetmilestones", description="Restore default milestone days for an event.")
-@app_commands.describe(index="The number shown in /listevents (1, 2, 3, ...)")
-@app_commands.autocomplete(index=event_index_autocomplete)
-@app_commands.checks.has_permissions(manage_guild=True)
-@app_commands.guild_only()
-async def resetmilestones(interaction: discord.Interaction, index: int):
-    guild = interaction.guild
-    assert guild is not None
-    g = get_guild_state(guild.id)
-
-    ev = get_event_by_index(g, index)
-    if not ev:
-        await interaction.response.send_message("Invalid index. Use `/listevents`.", ephemeral=True)
-        return
-
-    defaults = g.get("default_milestones")
-    if not isinstance(defaults, list) or not defaults:
-        defaults = DEFAULT_MILESTONES
-    ev["milestones"] = list(defaults)
-    ev["announced_milestones"] = []
-    save_state()
-
-    await interaction.response.send_message(
-        f"✅ Milestones reset for **{ev['name']}** to defaults: {', '.join(str(x) for x in defaults)}",
-        ephemeral=True,
-    )
 
 
-@bot.tree.command(name="silence", description="Stop reminders for an event (keeps it listed).")
-@app_commands.describe(index="The number shown in /listevents (1, 2, 3, ...)")
-@app_commands.autocomplete(index=event_index_autocomplete)
-@app_commands.checks.has_permissions(manage_guild=True)
-@app_commands.guild_only()
-async def silence(interaction: discord.Interaction, index: int):
-    guild = interaction.guild
-    assert guild is not None
-    g = get_guild_state(guild.id)
-
-    ev = get_event_by_index(g, index)
-    if not ev:
-        await interaction.response.send_message("Invalid index. Use `/listevents`.", ephemeral=True)
-        return
-
-    ev["silenced"] = not bool(ev.get("silenced", False))
-    save_state()
-
-    state_word = "silenced 🔕" if ev["silenced"] else "unsilenced 🔔"
-    await interaction.response.send_message(
-        f"✅ **{ev['name']}** is now {state_word}.",
-        ephemeral=True,
-    )
 
 
-@bot.tree.command(name="seteventowner", description="Assign an owner (they get milestone DMs).")
-@app_commands.describe(
-    index="The number shown in /listevents (1, 2, 3, ...)",
-    user="User who should receive DMs for this event",
-)
-@app_commands.autocomplete(index=event_index_autocomplete)
-@app_commands.checks.has_permissions(manage_guild=True)
-@app_commands.guild_only()
-async def seteventowner(interaction: discord.Interaction, index: int, user: discord.User):
-    guild = interaction.guild
-    assert guild is not None
-    g = get_guild_state(guild.id)
-
-    ev = get_event_by_index(g, index)
-    if not ev:
-        await interaction.response.send_message("Invalid index. Use `/listevents`.", ephemeral=True)
-        return
-
-    ev["owner_user_id"] = int(user.id)
-
-    # Cache a non-pinging display name for embeds/lists
-    member = guild.get_member(user.id)
-    ev["owner_name"] = member.display_name if member else user.name
-
-    save_state()
-
-    await interaction.response.send_message(
-        f"✅ Set owner for **{ev['name']}** to {user.mention} (they'll receive milestone + repeat reminder DMs).",
-        ephemeral=True,
-    )
 
 
-@bot.tree.command(name="cleareventowner", description="Remove the owner for an event.")
-@app_commands.describe(index="The number shown in /listevents (1, 2, 3, ...)")
-@app_commands.autocomplete(index=event_index_autocomplete)
-@app_commands.checks.has_permissions(manage_guild=True)
-@app_commands.guild_only()
-async def cleareventowner(interaction: discord.Interaction, index: int):
-    guild = interaction.guild
-    assert guild is not None
-    g = get_guild_state(guild.id)
-
-    ev = get_event_by_index(g, index)
-    if not ev:
-        await interaction.response.send_message("Invalid index. Use `/listevents`.", ephemeral=True)
-        return
-
-    ev["owner_user_id"] = None
-    ev["owner_name"] = None
-    save_state()
-
-    await interaction.response.send_message(
-        f"✅ Cleared owner for **{ev['name']}**.",
-        ephemeral=True,
-    )
 
 
-@bot.tree.command(name="setmentionrole", description="Mention a role on milestone posts.")
-@app_commands.describe(role="Role to mention when milestone reminders post")
-@app_commands.checks.has_permissions(manage_guild=True)
-@app_commands.guild_only()
-async def setmentionrole(interaction: discord.Interaction, role: discord.Role):
-    # ✅ Prevent the special @everyone role (it causes "@@everyone" escaping)
-    if role.is_default():  # @everyone role
-        await interaction.response.send_message(
-            "⚠️ You can’t set **@everyone** as the mention role.\n"
-            "If you want @everyone pings, give Chromie the **Mention Everyone** permission instead.",
-            ephemeral=True,
-        )
-        return
-
-    guild = interaction.guild
-    assert guild is not None
-    g = get_guild_state(guild.id)
-
-    g["mention_role_id"] = int(role.id)
-    save_state()
-
-    await interaction.response.send_message(
-        f"✅ Milestone reminders will now mention {role.mention}.",
-        ephemeral=True,
-    )
-
-@bot.tree.command(name="clearmentionrole", description="Stop role mentions on milestone posts.")
-@app_commands.checks.has_permissions(manage_guild=True)
-@app_commands.guild_only()
-async def clearmentionrole(interaction: discord.Interaction):
-    guild = interaction.guild
-    assert guild is not None
-    g = get_guild_state(guild.id)
-
-    g["mention_role_id"] = None
-    save_state()
-
-    await interaction.response.send_message(
-        "✅ Milestone role mentions have been cleared.",
-        ephemeral=True,
-    )
 
 
-@bot.tree.command(name="setrepeat", description="[Pro] Set a repeating reminder for an event (every X days).")
-@require_pro("Recurring Event Reminders")
-@app_commands.describe(
-    index="The number shown in /listevents (1, 2, 3, ...)",
-    every_days="Repeat interval in days (1 = daily, 7 = weekly, etc.)",
-)
-@app_commands.autocomplete(index=event_index_autocomplete)
-@app_commands.checks.has_permissions(manage_guild=True)
-@app_commands.guild_only()
-async def setrepeat(interaction: discord.Interaction, index: int, every_days: int):
-    guild = interaction.guild
-    assert guild is not None
-
-    if every_days < 1 or every_days > 365:
-        await interaction.response.send_message("Repeat interval must be between **1** and **365** days.", ephemeral=True)
-        return
-
-    g = get_guild_state(guild.id)
-    sort_events(g)
-    events = g.get("events", [])
-
-    if not events:
-        await interaction.response.send_message("There are no events yet. Add one with `/addevent` first.", ephemeral=True)
-        return
-
-    ev = get_event_by_index(g, index)
-    if not ev:
-        await interaction.response.send_message(f"Index must be between 1 and {len(events)}.", ephemeral=True)
-        return
-
-    today = _today_local_date(get_guild_timezone(g)).isoformat()
-    ev["repeat_every_days"] = int(every_days)
-    ev["repeat_anchor_date"] = today
-    ev["announced_repeat_dates"] = []
-    save_state()
-
-    plural = "s" if every_days != 1 else ""
-    await interaction.response.send_message(
-        f"✅ Repeating reminders enabled for **{ev['name']}** — every **{every_days}** day{plural} (starting tomorrow). "
-        f"Use `/clearrepeat index: {index}` to turn it off.",
-        ephemeral=True,
-    )
 
 
-@bot.tree.command(name="clearrepeat", description="[Pro] Turn off repeating reminders for an event.")
-@require_pro("Recurring Event Reminders")
-@app_commands.describe(index="The number shown in /listevents (1, 2, 3, ...)")
-@app_commands.autocomplete(index=event_index_autocomplete)
-@app_commands.checks.has_permissions(manage_guild=True)
-@app_commands.guild_only()
-async def clearrepeat(interaction: discord.Interaction, index: int):
-    guild = interaction.guild
-    assert guild is not None
 
-    g = get_guild_state(guild.id)
-    sort_events(g)
-    events = g.get("events", [])
 
-    if not events:
-        await interaction.response.send_message("There are no events to update.", ephemeral=True)
-        return
 
-    ev = get_event_by_index(g, index)
-    if not ev:
-        await interaction.response.send_message(f"Index must be between 1 and {len(events)}.", ephemeral=True)
-        return
-
-    ev["repeat_every_days"] = None
-    ev["repeat_anchor_date"] = None
-    ev["announced_repeat_dates"] = []
-    save_state()
-
-    await interaction.response.send_message(f"🧹 Repeating reminders disabled for **{ev['name']}**.", ephemeral=True)
 
 
 @bot.tree.command(name="archivepast", description="Remove past events.")
@@ -6033,46 +5394,24 @@ async def archivepast(interaction: discord.Interaction):
     assert guild is not None
     
     await interaction.response.defer(ephemeral=True)
-    
+
     g = get_guild_state(guild.id)
-    guild_state = g
-    tz = get_guild_timezone(guild_state)
-    sort_events(g)
-
-    now = datetime.now(tz)
-    before = len(g.get("events", []))
-    g["events"] = [ev for ev in g.get("events", []) if datetime.fromtimestamp(ev["timestamp"], tz=tz) > now]
-    after = len(g["events"])
-    removed = before - after
-
-    save_state()
-    
-    guild_state = g
-    ch_id = g.get("event_channel_id")
-    if ch_id:
-        ch = await get_text_channel(ch_id)
-        if ch:
-            await refresh_countdown_message(guild, guild_state)
-
-    await interaction.edit_original_response(content=f"🧹 Archived **{removed}** past event(s).")
-
-
-@bot.tree.command(name="resetchannel", description="Clear the configured event channel for this server.")
-@app_commands.checks.has_permissions(manage_guild=True)
-@app_commands.guild_only()
-async def resetchannel(interaction: discord.Interaction):
-    guild = interaction.guild
-    assert guild is not None
-    g = get_guild_state(guild.id)
-
-    g["event_channel_id"] = None
-    g["pinned_message_id"] = None
+    removed = 0
+    for cid, cs in iter_channel_states(g):
+        tz = get_guild_timezone(cs)
+        now = datetime.now(tz)
+        before = len(cs.get("events", []))
+        cs["events"] = [ev for ev in cs.get("events", []) if datetime.fromtimestamp(ev["timestamp"], tz=tz) > now]
+        if len(cs["events"]) != before:
+            removed += before - len(cs["events"])
+            ch = await get_text_channel(cid)
+            if ch:
+                await rebuild_pinned_message_for_channel(ch, cs, g)
     save_state()
 
-    await interaction.response.send_message(
-        "✅ Event channel configuration cleared. Run `/seteventchannel` again to set it.",
-        ephemeral=True,
-    )
+    await interaction.edit_original_response(content=f"🧹 Archived **{removed}** past event(s) across this server's countdown channels.")
+
+
 
 
 @bot.tree.command(name="healthcheck", description="Show config + permission diagnostics.")
@@ -6083,45 +5422,37 @@ async def healthcheck(interaction: discord.Interaction):
     assert guild is not None
     g = get_guild_state(guild.id)
 
-    channel_id = g.get("event_channel_id")
-    mention_role_id = g.get("mention_role_id")
-    num_events = len(g.get("events", []))
+    n_channels = count_countdown_channels(g)
+    lines = ["**ChronoBot Healthcheck**", f"Server: **{guild.name}**",
+             f"Countdown channels: **{n_channels}** • Pro: {'✅' if is_pro(g) else '❌'}"]
 
-    lines = []
-    lines.append("**ChronoBot Healthcheck**")
-    lines.append(f"Server: **{guild.name}**")
-    lines.append(f"Events stored: **{num_events}**")
+    if n_channels == 0:
+        lines.append("\nNo countdown channels yet. Run `/seteventchannel` in a channel to start.")
+        await interaction.response.send_message("\n".join(lines), ephemeral=True)
+        return
 
-    if channel_id:
-        ch = await get_text_channel(channel_id)
-        if ch:
-            lines.append(f"Event channel: {ch.mention} ✅")
-            bot_member = await get_bot_member(guild)
-            if bot_member:
-                perms = ch.permissions_for(bot_member)
-                lines.append(f"• Can view channel: {'✅' if perms.view_channel else '❌'}")
-                lines.append(f"• Can send messages: {'✅' if perms.send_messages else '❌'}")
-                lines.append(f"• Can embed links: {'✅' if perms.embed_links else '❌'}")
-                lines.append(f"• Can read history: {'✅' if perms.read_message_history else '❌'}")
-                lines.append(f"• Can manage messages (pin/unpin): {'✅' if perms.manage_messages else '❌'}")
-                lines.append(f"• Can mention @everyone: {'✅' if perms.mention_everyone else '❌'}")
-            else:
-                lines.append("• Bot member resolution: ❌ (couldn’t fetch bot member)")
-        else:
-            lines.append("Event channel: ❌ (configured channel not found / not accessible)")
-    else:
-        lines.append("Event channel: ❌ (not set)")
+    bot_member = await get_bot_member(guild)
+    for cid, cs in iter_channel_states(g):
+        ch = await get_text_channel(cid)
+        n_events = len(cs.get("events", []))
+        if ch is None:
+            lines.append(f"\n<#{cid}>: ❌ (channel not found / not accessible) — {n_events} event(s)")
+            continue
+        lines.append(f"\n{ch.mention} — {n_events} event(s)")
+        if bot_member:
+            perms = ch.permissions_for(bot_member)
+            lines.append(f"• view {'✅' if perms.view_channel else '❌'} • send {'✅' if perms.send_messages else '❌'} "
+                         f"• embed {'✅' if perms.embed_links else '❌'} • history {'✅' if perms.read_message_history else '❌'} "
+                         f"• pin {'✅' if perms.manage_messages else '❌'}")
+        role_id = cs.get("mention_role_id")
+        if role_id:
+            role = guild.get_role(int(role_id))
+            lines.append(f"• Mention role: {role.mention if role else '❌ (not found)'}")
 
-    if mention_role_id:
-        role = guild.get_role(int(mention_role_id))
-        lines.append(f"Mention role: {role.mention} ✅" if role else "Mention role: ❌ (role not found)")
-    else:
-        lines.append("Mention role: (none)")
-
-    await interaction.response.send_message("\n".join(lines), ephemeral=True)
+    await interaction.response.send_message("\n".join(lines)[:1990], ephemeral=True)
 
 
-@bot.tree.command(name="purgeevents", description="Delete all events for this server (requires confirm).")
+@bot.tree.command(name="purgeevents", description="Delete all events in this countdown channel (requires confirm).")
 @app_commands.describe(confirm="Type YES to confirm you want to delete all events.")
 @app_commands.checks.has_permissions(manage_guild=True)
 @app_commands.guild_only()
@@ -6130,24 +5461,25 @@ async def purgeevents(interaction: discord.Interaction, confirm: str):
     assert guild is not None
 
     await interaction.response.defer(ephemeral=True)
-    
+
+    g = get_guild_state(guild.id)
+    cid, cs = resolve_event_channel(g, interaction.channel_id)
+    if cs is None:
+        await interaction.edit_original_response(content=no_channel_guidance(g, "/purgeevents"))
+        return
+
     if (confirm or "").strip().upper() != "YES":
         await interaction.edit_original_response(content="Not confirmed. To purge, run `/purgeevents confirm: YES`.")
         return
 
-    g = get_guild_state(guild.id)
-    g["events"] = []
-    g["pinned_message_id"] = None
+    cs["events"] = []
     save_state()
 
-    guild_state = g
-    ch_id = g.get("event_channel_id")
-    if ch_id:
-        ch = await get_text_channel(ch_id)
-        if ch:
-            await refresh_countdown_message(guild, guild_state)
+    ch = await get_text_channel(cid)
+    if ch:
+        await rebuild_pinned_message_for_channel(ch, cs, g)
 
-    await interaction.edit_original_response(content="🧨 All events have been deleted for this server.")
+    await interaction.edit_original_response(content=f"🧨 All events deleted in <#{cid}>.")
 
 
 @bot.tree.command(name="update_countdown", description="Force-refresh the pinned countdown.")
@@ -6158,56 +5490,22 @@ async def update_countdown_cmd(interaction: discord.Interaction):
     assert guild is not None
 
     await interaction.response.defer(ephemeral=True)
-    
+
     g = get_guild_state(guild.id)
-    sort_events(g)
-
-    channel_id = g.get("event_channel_id")
-    if not channel_id:
-        await interaction.edit_original_response(content=
-            "No events channel set yet. Run `/seteventchannel` first."
-        )
+    cid, cs = resolve_event_channel(g, interaction.channel_id)
+    if cs is None:
+        await interaction.edit_original_response(content=no_channel_guidance(g, "/update_countdown"))
         return
 
-    if interaction.channel_id != channel_id:
-        await interaction.edit_original_response(content=
-            "Please run this command in the configured events channel."
-        )
-        return
-
-    channel = interaction.channel
-    assert isinstance(channel, discord.TextChannel)
-
-    pinned = await get_or_create_pinned_message(guild.id, channel, allow_create=True)
-    if pinned is None:
+    channel = await get_text_channel(cid)
+    if channel is None:
         await interaction.edit_original_response(
-            content="I couldn't create or access the pinned countdown message here. Check my permissions.",
+            content="I couldn't access that countdown channel. Check my permissions.",
         )
         return
 
-    embed = build_embed_for_guild(g)
-    try:
-        await pinned.edit(embed=embed)
-    except discord.Forbidden:
-        missing = missing_channel_perms(channel, channel.guild)
-        await notify_owner_missing_perms(
-            channel.guild,
-            channel,
-            missing=missing,
-            action="edit/update the pinned countdown message",
-        )
-        await interaction.edit_original_response(content=
-            "I don't have permission to edit that pinned message here. "
-            "I’ve messaged the server owner with a permissions fix guide.",
-        )
-        return
-    except discord.HTTPException as e:
-        await interaction.edit_original_response(content=
-            f"Discord errored while updating the pinned message: {e}",
-        )
-        return
-
-    await interaction.edit_original_response(content="⏱ Countdown updated.")
+    await refresh_countdown_message_for_channel(guild, channel, cs, g)
+    await interaction.edit_original_response(content=f"⏱ Countdown refreshed in <#{cid}>.")
 
 
 @bot.tree.command(name="resendsetup", description="Resend the onboarding/setup message.")
@@ -6244,78 +5542,8 @@ async def theme_autocomplete(
     return out[:25]
 
 
-@bot.tree.command(name="theme", description="Set the countdown theme (supporter themes require /vote).")
-@app_commands.describe(theme="Theme name (autocomplete will suggest options)")
-@app_commands.autocomplete(theme=theme_autocomplete)
-@app_commands.checks.has_permissions(manage_guild=True)
-@app_commands.guild_only()
-async def theme_cmd(interaction: discord.Interaction, theme: str):
-    guild = interaction.guild
-    assert guild is not None
-
-    await interaction.response.defer(ephemeral=True)
-
-    theme_id = normalize_theme_key(theme)
-    if theme_id not in THEMES:
-        choices = ", ".join(sorted(THEMES.keys()))
-        await interaction.edit_original_response(content=f"Unknown theme: `{theme}`. Available: {choices}")
-        return
-        
-    g = get_guild_state(guild.id)
-    # Pro inherits supporter perks. Only require a Top.gg vote if Pro is not active.
-    pro_active = is_pro(guild_state=g)  # adjust args to match your helper signature
-    
-    # Classic is always allowed; supporter themes require Pro or an active /vote by the caller.
-    if THEMES[theme_id].get("supporter_only") and not pro_active:
-        voted = await topgg_has_voted(interaction.user.id, force=True)
-        if not voted:
-            await send_vote_required(interaction, feature_label=f"`{theme_id}` theme")
-            return
-
-    g["theme"] = theme_id
-    save_state()
-
-    # Refresh the pinned message (best-effort)
-    try:
-        await refresh_countdown_message(guild, g)
-    except Exception:
-        pass
-
-    await interaction.edit_original_response(content=f"Theme set to **{_THEME_LABELS.get(theme_id, theme_id.title())}**.")
 
 
-@bot.tree.command(name="timeformat", description="Set how time remaining is displayed in the countdown embed.")
-@app_commands.describe(unit="Display format for the countdown timer")
-@app_commands.choices(unit=[
-    app_commands.Choice(name="Discord (default — e.g. 'in 3 months')", value="discord"),
-    app_commands.Choice(name="Days (e.g. '90 days')", value="days"),
-    app_commands.Choice(name="Weeks (e.g. '12 weeks')", value="weeks"),
-    app_commands.Choice(name="Detailed (e.g. '12 weeks and 6 days')", value="detailed"),
-])
-@app_commands.checks.has_permissions(manage_guild=True)
-@app_commands.guild_only()
-async def timeunit_cmd(interaction: discord.Interaction, unit: str):
-    guild = interaction.guild
-    assert guild is not None
-
-    await interaction.response.defer(ephemeral=True)
-
-    g = get_guild_state(guild.id)
-    g["time_unit"] = unit
-    save_state()
-
-    try:
-        await refresh_countdown_message(guild, g)
-    except Exception:
-        pass
-
-    _UNIT_LABELS = {
-        "discord": "Discord native (e.g. 'in 3 months')",
-        "days": "Days (e.g. '90 days')",
-        "weeks": "Weeks (e.g. '12 weeks')",
-        "detailed": "Detailed (e.g. '12 weeks and 6 days')",
-    }
-    await interaction.edit_original_response(content=f"Time display set to **{_UNIT_LABELS[unit]}**.")
 
 
 @bot.tree.command(name="chronohelp", description="Show Chromie help (paged).")
@@ -6384,78 +5612,8 @@ async def timezone_autocomplete(
 # TIMEZONE COMMANDS
 # ==========================
 
-@bot.tree.command(name="timezone_set", description="Set your server's timezone for event scheduling")
-@app_commands.describe(timezone="Timezone (type to search, e.g., 'Eastern', 'Tokyo', 'London')")
-@app_commands.autocomplete(timezone=timezone_autocomplete)
-@app_commands.checks.has_permissions(administrator=True)
-@app_commands.guild_only()
-async def timezone_set(interaction: discord.Interaction, timezone: str):
-    """Set the server's timezone"""
-    await interaction.response.defer(ephemeral=True)
-    
-    import pytz
-    timezone = timezone.strip()
-    
-    # Validate timezone
-    try:
-        pytz.timezone(timezone)
-    except pytz.exceptions.UnknownTimeZoneError:
-        embed = discord.Embed(
-            title="❌ Invalid Timezone",
-            description=f"`{timezone}` is not a valid timezone.\n\nPlease select from the autocomplete suggestions.",
-            color=discord.Color.red()
-        )
-        await interaction.edit_original_response(embed=embed)
-        return
-    
-    # Set the timezone
-    try:
-        set_server_timezone(interaction.guild_id, timezone)
-        
-        embed = discord.Embed(
-            title="✅ Timezone Updated",
-            description=f"Server timezone has been set to **{timezone}**\n\n"
-                       "All event reminders will now be calculated based on this timezone.",
-            color=discord.Color.green()
-        )
-        embed.set_footer(text=f"Set by {interaction.user.name}")
-        await interaction.edit_original_response(embed=embed)
-    except Exception as e:
-        embed = discord.Embed(
-            title="❌ Error Setting Timezone",
-            description=f"An error occurred: {str(e)}",
-            color=discord.Color.red()
-        )
-        await interaction.edit_original_response(embed=embed)
 
 
-@bot.tree.command(name="timezone_view", description="View your server's current timezone")
-@app_commands.guild_only()
-async def timezone_view(interaction: discord.Interaction):
-    """View the server's timezone"""
-    await interaction.response.defer(ephemeral=True)
-    
-    try:
-        current_tz = get_server_timezone(interaction.guild_id)
-        
-        embed = discord.Embed(
-            title="🌍 Server Timezone",
-            description=f"**Current timezone:** `{current_tz}`",
-            color=discord.Color.blue()
-        )
-        embed.add_field(
-            name="Change timezone",
-            value="Use `/timezone_set` and start typing to search for a timezone.",
-            inline=False
-        )
-        await interaction.edit_original_response(embed=embed)
-    except Exception as e:
-        embed = discord.Embed(
-            title="❌ Error",
-            description=f"Could not retrieve timezone: {str(e)}",
-            color=discord.Color.red()
-        )
-        await interaction.edit_original_response(embed=embed)
 
 
 # ==========================
@@ -6509,152 +5667,8 @@ async def event_index_autocomplete(
         return []
 
 
-@bot.tree.command(name="editevent_reminder", description="Set a custom reminder time for an event")
-@app_commands.describe(
-    event_index="Select the event (or type to search by name/number)",
-    reminder_time="Time for reminders in HH:MM format (24-hour). Example: 09:00"
-)
-@app_commands.autocomplete(event_index=event_index_autocomplete)
-@app_commands.checks.has_permissions(manage_messages=True)
-@app_commands.guild_only()
-async def editevent_reminder(
-    interaction: discord.Interaction,
-    event_index: int,
-    reminder_time: str
-):
-    """
-    Set a custom reminder time for an event
-    
-    Usage:
-        /editevent_reminder event_index:1 reminder_time:09:00
-        /editevent_reminder event_index:2 reminder_time:14:30
-    """
-    await interaction.response.defer(ephemeral=True)
-    
-    try:
-        guild_state = get_guild_state(interaction.guild_id)
-        events = guild_state.get("events", [])
-        
-        # Validate event index (1-based from user, 0-based internally)
-        if event_index < 1 or event_index > len(events):
-            embed = discord.Embed(
-                title="❌ Invalid Event Number",
-                description=f"Event number must be between 1 and {len(events)}.",
-                color=discord.Color.red()
-            )
-            await interaction.edit_original_response(embed=embed)
-            return
-        
-        event_idx = event_index - 1  # Convert to 0-based
-        event = events[event_idx]
-        event_name = event.get("name", "Unknown Event")
-        
-        # Validate reminder_time format
-        reminder_time = reminder_time.strip()
-        if not validate_time_format(reminder_time):
-            embed = discord.Embed(
-                title="❌ Invalid Time Format",
-                description=f"`{reminder_time}` is not a valid time.\n\n"
-                           f"Use 24-hour format: `HH:MM`\n\n"
-                           f"Examples:\n"
-                           f"• `09:00` (9:00 AM)\n"
-                           f"• `14:30` (2:30 PM)\n"
-                           f"• `23:59` (11:59 PM)",
-                color=discord.Color.red()
-            )
-            await interaction.edit_original_response(embed=embed)
-            return
-        
-        # Set the reminder time
-        success = set_event_reminder_time(interaction.guild_id, event_idx, reminder_time)
-        
-        if success:
-            embed = discord.Embed(
-                title="✅ Reminder Time Updated",
-                description=f"**{event_name}** reminders will now send at **{reminder_time}**",
-                color=discord.Color.green()
-            )
-            embed.add_field(
-                name="ℹ️ What this means",
-                value=f"Milestone reminders (100 days, 60 days, etc.) will send at the event time.\n"
-                      f"The final day-of reminder will send at **{reminder_time}** instead of the event time.",
-                inline=False
-            )
-            await interaction.edit_original_response(embed=embed)
-        else:
-            embed = discord.Embed(
-                title="❌ Error",
-                description=f"Could not update reminder time for event #{event_index}.",
-                color=discord.Color.red()
-            )
-            await interaction.edit_original_response(embed=embed)
-    
-    except Exception as e:
-        embed = discord.Embed(
-            title="❌ Error",
-            description=f"An error occurred: {str(e)}",
-            color=discord.Color.red()
-        )
-        await interaction.edit_original_response(embed=embed)
 
 
-@bot.tree.command(name="clear_reminder_time", description="Clear custom reminder time for an event")
-@app_commands.describe(event_index="Select the event (or type to search by name/number)")
-@app_commands.autocomplete(event_index=event_index_autocomplete)
-@app_commands.checks.has_permissions(manage_messages=True)
-@app_commands.guild_only()
-async def clear_reminder_time(interaction: discord.Interaction, event_index: int):
-    """
-    Clear custom reminder time for an event (revert to using event time)
-    
-    Usage:
-        /clear_reminder_time event_index:1
-    """
-    await interaction.response.defer(ephemeral=True)
-    
-    try:
-        guild_state = get_guild_state(interaction.guild_id)
-        events = guild_state.get("events", [])
-        
-        # Validate event index
-        if event_index < 1 or event_index > len(events):
-            embed = discord.Embed(
-                title="❌ Invalid Event Number",
-                description=f"Event number must be between 1 and {len(events)}.",
-                color=discord.Color.red()
-            )
-            await interaction.edit_original_response(embed=embed)
-            return
-        
-        event_idx = event_index - 1
-        event = events[event_idx]
-        event_name = event.get("name", "Unknown Event")
-        
-        # Clear the reminder time (set to None)
-        success = set_event_reminder_time(interaction.guild_id, event_idx, None)
-        
-        if success:
-            embed = discord.Embed(
-                title="✅ Reminder Time Cleared",
-                description=f"**{event_name}** will now send reminders at the event time (not customized).",
-                color=discord.Color.green()
-            )
-            await interaction.edit_original_response(embed=embed)
-        else:
-            embed = discord.Embed(
-                title="❌ Error",
-                description=f"Could not clear reminder time for event #{event_index}.",
-                color=discord.Color.red()
-            )
-            await interaction.edit_original_response(embed=embed)
-    
-    except Exception as e:
-        embed = discord.Embed(
-            title="❌ Error",
-            description=f"An error occurred: {str(e)}",
-            color=discord.Color.red()
-        )
-        await interaction.edit_original_response(embed=embed)
 
 
 @bot.tree.command(name="pro_status", description="Check if your server has Pro")
@@ -6805,9 +5819,12 @@ async def owner_unlock_command(
         return
     
     save_state()
-    try:
-        await refresh_countdown_message(interaction.guild, guild_state)
-    except:
-        pass
-    
+    for cid, cs in iter_channel_states(guild_state):
+        ch = await get_text_channel(cid)
+        if ch:
+            try:
+                await refresh_countdown_message_for_channel(interaction.guild, ch, cs, guild_state)
+            except Exception:
+                pass
+
     await interaction.response.send_message(msg, ephemeral=True)

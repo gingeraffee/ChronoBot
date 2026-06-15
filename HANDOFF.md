@@ -54,31 +54,38 @@ Orphan events (no channel) are preserved under the sentinel key `"unassigned"`.
 - `iter_channel_states(guild_state)` — yields (cid:int, bucket); skips `unassigned`.
 - `count_countdown_channels(guild_state)`; `can_add_countdown_channel(guild_state, cid)`
   (1 free via `FREE_CHANNEL_LIMIT`, Plus unlimited; existing channel always allowed).
+- `resolve_event_channel(guild_state, channel_id)` — picks the channel a command acts
+  on (current channel → else the single channel → else None); `no_channel_guidance(...)`
+  renders the 0/multiple-channel nudge.
 
-## ▶️ NEXT: the command sweep (do as one coherent batch)
-The ~50 commands still read guild-level fields, which are empty after migration —
-so they must be flipped together to avoid a broken half-state.
-1. **Setup/CRUD first** (gives working end-to-end): `/seteventchannel` (add gating via
-   `can_add_countdown_channel`, build pin via `rebuild_pinned_message_for_channel`),
-   `/addevent`, `/listevents`, `/removeevent`, `/editevent`. Pattern per command:
-   resolve `cs = get_channel_state(guild_id, interaction.channel_id)` and use `cs`
-   where the old code used `guild_state` for events/theme/etc.
-2. **`/countdown` hub** (channel settings: theme, timezone, time format, mention role,
-   title/desc overrides, digest) — Select + Modal, modeled on existing `HelpView`.
-3. **`/event` hub** (Select an event → modal/buttons for all fields) incl. the
-   **per-event DM opt-in toggle (default off)**.
-4. Retire/redirect remaining old commands; remove now-unused legacy wrappers
-   (`build_embed_for_guild`, `rebuild_pinned_message`, `get_or_create_pinned_message`,
-   `refresh_countdown_message`) once nothing calls them.
-5. Server-level commands stay on `get_guild_state`: `/vote`, `/pro_status`,
-   `/sync_subscription`, `/template save|load` (shared), supporter stuff.
-6. Themes revamp last.
+## ✅ COMMAND SWEEP — DONE (committed on the branch)
+- `906f744` Step 1 — **Setup/CRUD** flipped per-channel: `/seteventchannel` (gating +
+  orphan adoption + builds pin), `/addevent`, `/listevents`, `/nextevent`,
+  `/eventinfo`*, `/removeevent`*, `/editevent`*, `/remindall`, autocomplete.
+  (* later folded into `/event` hub — see Step 6.) +`tests/test_resolve_channel.py`.
+- `e72e7fa` Step 2 — **`/countdown` hub** (Select + Modal/Buttons): theme, timezone,
+  time format, mention role, auto-delete, title/desc (Pro), digest (Pro), remove
+  channel. Removed old `digest` + `countdown` groups. +`tests/test_countdown_hub.py`.
+- `bcf44db` Step 3 — **`/event` hub** (pick event → actions) + **per-event owner-DM
+  opt-in (default OFF)**; extracted `add_event_core()` shared by `/addevent` + hub.
+  +`tests/test_event_hub.py`.
+- Step 6 (this commit) — **retired ~20 granular commands** (theme/timezone_*/timeformat/
+  mentionrole/resetchannel/eventinfo/editevent/removeevent/setmilestones/silence/
+  owner/banner/repeat/dupe/reminder-time + milestones & banner groups), folded
+  auto-delete into `/countdown`, flipped the remaining utilities to per-channel
+  (template save/load, archivepast, healthcheck, purgeevents, update_countdown,
+  owner_unlock), removed the 4 legacy wrappers, refreshed help/onboarding copy.
+  Dropped the redundant `@require_vote` on `/template save|load`.
 
-### Cleanup noticed (do during sweep)
-- `/template save|load` and `/digest enable` carry BOTH `@require_pro` and
-  `@require_vote` — vote decorator is redundant (Pro auto-passes it). Remove it.
-- `/banner clear` and `/milestones autodelete` require a vote even to turn the
-  feature OFF — make the off/clear direction free.
+Command surface is now ~22 (was ~50): hubs `/countdown` + `/event`; fast top-level
+`/addevent /listevents /nextevent /remindall /chronohelp /vote /pro_status
+/seteventchannel`; `/template save|load`; admin/maintenance the rest.
+
+## ▶️ REMAINING
+- **Themes revamp** (the "LAST phase"): preview-before-apply, seasonal/limited Pro
+  themes, new themes (Birthday/Baby, Wedding, Game Launch, School/Exam), Pro
+  build-your-own. The `/countdown` → Theme Select is the natural surface.
+- **Go-live** (see procedure below) once themes are in or deferred.
 
 ## Tests & local dev
 ```bash
@@ -86,6 +93,9 @@ pip install "discord.py>=2.0,<3.0" "pytz>=2024.1"   # one-time
 python tests/test_migrate_per_channel.py            # migration (10)
 python tests/test_accessors.py                      # accessors/gating (8)
 python tests/test_engine.py                         # startup migration + loop (2)
+python tests/test_resolve_channel.py                # channel resolver (10)
+python tests/test_countdown_hub.py                  # /countdown hub (7)
+python tests/test_event_hub.py                      # /event hub + add_event_core (7)
 python -m py_compile chromie.py                     # syntax check
 ```
 Tests import `chromie` with a **temp `CHROMIE_DATA_PATH`** so they never touch prod.

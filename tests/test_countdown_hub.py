@@ -61,7 +61,8 @@ def test_hub_view_has_setting_select_with_all_options():
     selects = [c for c in view.children if isinstance(c, chromie.CountdownSettingSelect)]
     assert len(selects) == 1
     values = {o.value for o in selects[0].options}
-    assert values == {"theme", "timezone", "timeformat", "role", "title", "description", "digest", "remove"}
+    assert values == {"theme", "timezone", "timeformat", "role", "autodelete",
+                      "title", "description", "digest", "remove"}
 
 
 def test_time_format_select_matches_unit_labels():
@@ -95,6 +96,7 @@ def test_sub_and_modal_views_construct():
     # views
     chromie.CountdownRoleView(gid, cid)
     chromie.CountdownDigestView(gid, cid)
+    chromie.CountdownAutoDeleteView(gid, cid)
     chromie.CountdownRemoveView(gid, cid)
     chromie.CountdownSubView(gid, cid, chromie.CountdownTimeFormatSelect())
     # modals (parent interaction not needed for construction)
