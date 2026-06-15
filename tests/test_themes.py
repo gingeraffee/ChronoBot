@@ -1,0 +1,195 @@
+"""Validation for the theme dicts in chromie.py.
+
+A theme is coherent only if it exists in all three dicts (THEMES for message
+pools + gating, THEME_LAYOUTS for the embed, _THEME_LABELS for the picker) and
+every template string formats cleanly. This guards the hand-written content for
+the new themes (birthday/wedding/gamelaunch/exam) and the existing ones.
+
+Run from repo root:  python tests/test_themes.py
+"""
+
+import os
+import sys
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO))
+
+os.environ["CHROMIE_DATA_PATH"] = os.path.join(tempfile.gettempdir(), "chromie_test_themes_state.json")
+
+import chromie  # noqa: E402
+
+NEW = ("birthday", "wedding", "gamelaunch", "exam")
+POOL_KEYS = ("pin_title_pool", "event_emoji_pool", "milestone_emoji_pool",
+             "repeat_templates", "remindall_templates", "start_blast_templates")
+MILESTONE_SUBKEYS = ("default", "one_day", "zero_day")
+FMT = dict(emoji="⏰", event="Test Event", days=5, time_left="5 days", date="January 1, 2026")
+
+
+def test_three_dicts_cover_the_same_themes():
+    themes = set(chromie.THEMES)
+    layouts = set(chromie.THEME_LAYOUTS)
+    labels = set(chromie._THEME_LABELS)
+    assert themes == layouts == labels, (
+        f"mismatch: only in THEMES={themes - layouts - labels}, "
+        f"only in LAYOUTS={layouts - themes}, only in LABELS={labels - themes}"
+    )
+
+
+def test_new_themes_present_and_supporter_only():
+    for k in NEW:
+        assert k in chromie.THEMES and k in chromie.THEME_LAYOUTS and k in chromie._THEME_LABELS
+        assert chromie.THEMES[k].get("supporter_only") is True
+
+
+def test_every_theme_has_required_pools_nonempty():
+    for tid, t in chromie.THEMES.items():
+        for key in POOL_KEYS:
+            assert isinstance(t.get(key), list) and t[key], f"{tid}.{key} missing/empty"
+        mt = t.get("milestone_templates")
+        assert isinstance(mt, dict), f"{tid}.milestone_templates not a dict"
+        for sub in MILESTONE_SUBKEYS:
+            assert isinstance(mt.get(sub), list) and mt[sub], f"{tid}.milestone_templates.{sub} missing/empty"
+        assert "color" in t and "label" in t
+
+
+def test_every_layout_has_required_keys():
+    for tid, lay in chromie.THEME_LAYOUTS.items():
+        for key in ("title", "subtitle", "footer", "color", "emoji"):
+            assert key in lay, f"{tid} layout missing {key}"
+
+
+def test_every_template_formats_cleanly():
+    # Deterministically format EVERY string in EVERY pool — a stray/typo'd
+    # placeholder would raise KeyError/IndexError here.
+    for tid, t in chromie.THEMES.items():
+        strings = []
+        strings += t["pin_title_pool"]
+        strings += t["repeat_templates"] + t["remindall_templates"] + t["start_blast_templates"]
+        for sub in MILESTONE_SUBKEYS:
+            strings += t["milestone_templates"][sub]
+        for s in strings:
+            try:
+                s.format(**FMT)
+            except (KeyError, IndexError, ValueError) as e:
+                raise AssertionError(f"{tid}: template failed to format ({type(e).__name__}: {e}): {s!r}")
+
+
+def test_message_builders_and_embed_work_for_new_themes():
+    for tid in NEW:
+        gs = {"theme": tid}
+        assert chromie.build_milestone_message(gs, event_name="E", days_left=3, time_left="3 days", date_str="Jan 1")
+        assert chromie.build_repeat_message(gs, event_name="E", time_left="3 days", date_str="Jan 1")
+        assert chromie.build_remindall_message(gs, event_name="E", time_left="3 days", date_str="Jan 1")
+        assert chromie.build_start_blast_message(gs, event_name="E")
+        # embed renders via the layout path
+        cs = {"theme": tid, "events": [], "timezone": "UTC", "time_unit": "discord"}
+        embed = chromie.build_embed_for_channel(cs, {})
+        assert embed.title and embed.description
+
+
+# ---- seasonal / pro-only gating ----
+
+_OCT = datetime(2026, 10, 15, tzinfo=timezone.utc)
+_JUN = datetime(2026, 6, 15, tzinfo=timezone.utc)
+
+
+def test_seasonal_theme_only_in_window():
+    assert chromie.theme_in_season("spooky", _OCT) is True
+    assert chromie.theme_in_season("spooky", _JUN) is False
+    # non-seasonal themes are always in season
+    assert chromie.theme_in_season("football", _JUN) is True
+    assert chromie._season_label("spooky") == "Sep/Oct"
+
+
+def test_pro_only_flag():
+    assert chromie.theme_is_pro_only("gamelaunch") is True
+    assert chromie.theme_is_pro_only("football") is False
+
+
+def test_picker_description_reflects_gates():
+    free = chromie.get_guild_state(770001)
+    pro = chromie.get_guild_state(770002)
+    pro["pro"] = {"discord_subscription": True}
+    # out-of-season beats other states
+    assert chromie.theme_picker_description("spooky", free, _JUN) == "🗓️ Sep/Oct only"
+    # pro-only theme on a free server
+    assert chromie.theme_picker_description("gamelaunch", free) == "💎 Pro only"
+    # ordinary supporter theme on a free server
+    assert chromie.theme_picker_description("football", free) == "🔒 Supporter / Pro"
+    # pro server: supporter + pro-only both unlocked -> no marker
+    assert chromie.theme_picker_description("gamelaunch", pro) is None
+    assert chromie.theme_picker_description("football", pro) is None
+    # free theme: never marked
+    assert chromie.theme_picker_description("classic", free) is None
+
+
+def test_preview_apply_button_state():
+    free = chromie.get_guild_state(770003)
+    pro = chromie.get_guild_state(770004)
+    pro["pro"] = {"discord_subscription": True}
+    f = chromie.CountdownThemePreviewView._apply_button_state
+    assert f("gamelaunch", free) == ("Apply (Pro only)", "💎")
+    assert f("gamelaunch", pro) == ("Apply this theme", "✅")
+    assert f("football", free) == ("Apply (Supporter/Pro)", "🔒")
+    assert f("classic", free) == ("Apply this theme", "✅")
+
+
+# ---- build-your-own custom theme ----
+
+def test_custom_layout_reads_bucket():
+    cs = {"theme": "custom", "custom_theme": {
+        "title": "My Board", "subtitle": "sub", "footer": "ftr",
+        "color": 0x8C52FF, "emoji": "🎯"}}
+    lay = chromie.get_theme_layout(cs)
+    assert lay["title"] == "My Board"
+    assert lay["emoji"] == "🎯"
+    assert lay["footer"] == "ftr"
+    assert lay["color"].value == 0x8C52FF
+
+
+def test_custom_layout_falls_back_without_bucket():
+    # theme=custom but nothing defined yet -> classic base, no crash
+    lay = chromie.get_theme_layout({"theme": "custom", "custom_theme": None})
+    assert lay["title"] == chromie.THEME_LAYOUTS["classic"]["title"]
+    # partial custom_theme: only color set, rest from classic
+    lay2 = chromie.get_theme_layout({"theme": "custom", "custom_theme": {"color": 0x112233}})
+    assert lay2["color"].value == 0x112233
+    assert lay2["title"] == chromie.THEME_LAYOUTS["classic"]["title"]
+
+
+def test_custom_theme_embed_and_messages():
+    cs = {"theme": "custom", "events": [], "timezone": "UTC", "time_unit": "discord",
+          "custom_theme": {"title": "Launch HQ", "color": 0x00D1B2, "emoji": "🚀"}}
+    e = chromie.build_embed_for_channel(cs, {})
+    assert e.title == "Launch HQ"
+    assert e.color.value == 0x00D1B2
+    # reminder messages fall back to a valid (classic) style, no crash
+    assert chromie.build_milestone_message(cs, event_name="E", days_left=2, time_left="2 days", date_str="Jan 1")
+    assert chromie.build_start_blast_message(cs, event_name="E")
+
+
+def test_custom_not_in_theme_dicts():
+    # 'custom' is virtual — must NOT pollute the picker/theme dicts
+    assert "custom" not in chromie.THEMES
+    assert "custom" not in chromie._THEME_LABELS
+    assert "custom" not in chromie.THEME_LAYOUTS
+
+
+if __name__ == "__main__":
+    failures = 0
+    for name, fn in sorted(globals().items()):
+        if name.startswith("test_") and callable(fn):
+            try:
+                fn()
+                print(f"PASS {name}")
+            except AssertionError as e:
+                failures += 1
+                print(f"FAIL {name}: {e}")
+            except Exception as e:
+                failures += 1
+                print(f"ERROR {name}: {type(e).__name__}: {e}")
+    print(f"\n{'ALL PASSED' if not failures else f'{failures} FAILED'}")
+    sys.exit(1 if failures else 0)
