@@ -109,14 +109,21 @@ hook + Chrome and drove all four flows — **all PASS**:
 > Discord Developer Portal before reusing.
 
 ## ▶️ REMAINING
-- ✅ DONE `ad62bf4` — perms-warning copy tweak: `classify_missing_perms()` splits
-  blocking (view/send/embed → strong warning + owner DM) from degraded
-  (manage_messages/read_message_history → soft note, no owner DM); both name the
-  exact perm. +`tests/test_perms_classify.py`. (Not yet re-verified live.)
-- **NEXT UP — Themes revamp** (the "LAST phase"): preview-before-apply, seasonal/limited Pro
-  themes, new themes (Birthday/Baby, Wedding, Game Launch, School/Exam), Pro
-  build-your-own. The `/countdown` → Theme Select is the natural surface.
-- **Go-live** (see procedure below) once themes are in or deferred.
+- ✅ DONE `ad62bf4` — perms-warning copy tweak (`classify_missing_perms()`:
+  blocking → strong warning + owner DM; degraded → soft note, no DM; both name the
+  perm). Re-verified live `2026-06-15`: full-perms `/seteventchannel` now returns a
+  clean success with no false alarm.
+- ✅ DONE — **Themes revamp** (3 of 4 ideas):
+  - `59608c8` 4 new supporter themes: Birthday & Baby 🎂, Wedding 💍, Game Launch 🚀,
+    Exam Season 📚 (catalog now 19). +`tests/test_themes.py`.
+  - `53e0b11` preview-before-apply in `/countdown → Theme` (sample embed + Apply/Back;
+    preview is free even for locked themes).
+  - `db54654` seasonal (`season_months`, applied to spooky=[9,10]) + Pro-only
+    (`pro_only`, applied to gamelaunch) gating, with picker markers + apply
+    enforcement. Flags are easy to tune per theme.
+  - **DEFERRED — Pro build-your-own** (custom theme builder per channel; the biggest
+    sub-feature, its own phase). Not started.
+- **NEXT UP — Go-live** (see procedure below). Optionally do Pro build-your-own first.
 - Housekeeping: git is committing as `nicole.thornton@apirx.com`; switch to
   `nthorn330@gmail.com` if these commits should carry the gmail identity.
 
@@ -130,6 +137,7 @@ python tests/test_resolve_channel.py                # channel resolver (10)
 python tests/test_countdown_hub.py                  # /countdown hub (7)
 python tests/test_event_hub.py                      # /event hub + add_event_core (7)
 python tests/test_perms_classify.py                 # perms warning split (6)
+python tests/test_themes.py                         # theme dicts + seasonal/pro gating (10)
 python -m py_compile chromie.py                     # syntax check
 ```
 Tests import `chromie` with a **temp `CHROMIE_DATA_PATH`** so they never touch prod.
