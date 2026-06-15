@@ -84,7 +84,7 @@ async def maybe_vote_nudge(interaction: discord.Interaction, reason: str) -> Non
     msg = (
         f"💜 {reason}\n"
         "Voting unlocks supporter perks:\n"
-        "• 5 events • premium themes (`/countdown`) • event banners (`/event`)"
+        "• 3 events • premium themes (`/countdown`) • event banners (`/event`)"
     )
 
     # Use followup if already responded
@@ -402,7 +402,7 @@ EVENT_START_GRACE_SECONDS = 60 * 60  # 1 hour: announce if bot wakes up within 1
 
 PREMIUM_PERKS_TEXT = (
     "Voting unlocks (free, 12 hours):\n"
-    "• 5 events (vs 3)\n"
+    "• 3 events (vs 1)\n"
     "• premium themes — `/countdown` → Theme\n"
     "• event banners — `/event` → Banner"
 )
@@ -1438,15 +1438,15 @@ async def send_onboarding_for_guild(guild: discord.Guild):
     # Message 2: Tiers & Supporter features
     # -----------------------------
     supporter_message = (
-        "**🎯 Your tier: Free (3 events max)**\n"
-        "• 🆓 **Free:** 3 events, 1 countdown channel, all core features\n"
-        "• ⭐ **Supporter:** 5 events, premium themes, banners (vote on Top.gg - free!)\n"
+        "**🎯 Your tier: Free (1 event max)**\n"
+        "• 🆓 **Free:** 1 event, 1 countdown channel, all core features\n"
+        "• ⭐ **Supporter:** 3 events, premium themes, banners (vote on Top.gg - free!)\n"
         "• 💎 **Pro:** Unlimited events, countdowns in every channel, build-your-own themes & more ($2.99/mo)\n"
         "Run `/vote` to unlock Supporter, or subscribe for Pro via our Store!\n\n"
         "**⭐ Supporter Tier (Vote to unlock - Free!)**\n"
         "Chromie is free. Voting on Top.gg helps it grow — and unlocks bonus features for 12 hours.\n\n"
         "**What you get:**\n"
-        "• 5 events (vs 3 for Free)\n"
+        "• 3 events (vs 1 for Free)\n"
         "• 19 premium themes incl. seasonal drops — preview before you apply (`/countdown` → Theme)\n"
         "• Custom event banners (`/event` → Banner)\n\n"
         "**How to unlock:**\n"
@@ -1713,7 +1713,7 @@ HELP_PAGES = {
             "2) Add an event: `/addevent`\n"
             "3) Chromie keeps the pinned countdown updated.\n\n"
             "**🎯 Event Limits by Tier:**\n"
-            "🆓 Free: 3 events • ⭐ Supporter: 5 events • 💎 Pro: Unlimited\n"
+            "🆓 Free: 1 event • ⭐ Supporter: 3 events • 💎 Pro: Unlimited\n"
             "Run `/vote` to unlock Supporter (free!), or subscribe to Pro ($2.99/mo) for unlimited events + advanced features.\n\n"
             "Use the dropdown to browse commands by category."
         ),
@@ -1777,14 +1777,14 @@ HELP_PAGES = {
         "desc": "Chromie has three tiers to fit your needs.",
         "lines": [
             "**🆓 Free Tier (Always free!)**",
-            "• Up to 3 events",
+            "• Up to 1 event",
             "• All core countdown features",
             "• Milestone reminders",
             "• Event management (add/edit/delete)",
             "• 14 premium themes",
             "",
             "**⭐ Supporter Tier (Vote to unlock - Free!)**",
-            "• Up to 5 events",
+            "• Up to 3 events",
             "• Everything in Free",
             "• Custom event banners (`/event` → Banner)",
             "• Advanced milestone customization",
@@ -1808,7 +1808,7 @@ HELP_PAGES = {
         "desc": "Vote on Top.gg to unlock Supporter features for 12 hours (completely free!).",
         "lines": [
             "**What you get:**",
-            "• 5 events (vs 3 for Free)",
+            "• 3 events (vs 1 for Free)",
             "• Custom themes (`/countdown` → Theme)",
             "• Event banners (`/event` → Banner)",
             "• Advanced milestone customization",
@@ -5340,24 +5340,35 @@ async def add_event_core(guild, guild_state, cs, cid, *, actor, member, date, ti
     if is_pro_guild:
         event_limit, tier_name = None, "Chromie Pro"
     elif has_voted:
-        event_limit, tier_name = 5, "Supporter"
+        event_limit, tier_name = 3, "Supporter"
     else:
-        event_limit, tier_name = 3, "Free"
+        event_limit, tier_name = 1, "Free"
 
     if event_limit is not None and current_event_count >= event_limit:
-        if tier_name == "Free":
-            return (
+        # Grandfathered servers can sit ABOVE the new cap (we never delete events).
+        # Show a friendly "over the new limit" note instead of a bug-looking "3/1".
+        if current_event_count > event_limit:
+            headline = (
+                f"📌 **You're above the new {tier_name} limit.**\n\n"
+                f"You have **{current_event_count}** events and the {tier_name} limit is now "
+                f"**{event_limit}**. Your current events stay put — you can add new ones once "
+                f"you're back under **{event_limit}**.\n\n"
+            )
+        else:
+            headline = (
                 f"❌ **Event limit reached!**\n\n"
-                f"You have **{current_event_count}/{event_limit} events** (Free tier limit).\n\n"
+                f"You have **{current_event_count}/{event_limit} events** ({tier_name} tier limit).\n\n"
+            )
+
+        if tier_name == "Free":
+            return headline + (
                 f"**Upgrade options:**\n"
-                f"• 🗳️ **Vote on Top.gg** → Get 5 events (resets every 12 hours)\n"
+                f"• 🗳️ **Vote on Top.gg** → Get 3 events (resets every 12 hours)\n"
                 f"  Use `/vote` to get the link!\n"
                 f"• 💎 **Chromie Pro** → Unlimited events + premium features\n\n"
                 f"Or delete an event from `/event` first."
             ), False
-        return (
-            f"❌ **Event limit reached!**\n\n"
-            f"You have **{current_event_count}/{event_limit} events** (Supporter tier limit).\n\n"
+        return headline + (
             f"**Upgrade to Chromie Pro for:**\n"
             f"• ♾️ Unlimited events\n"
             f"• 💎 Premium features\n"
@@ -5409,7 +5420,7 @@ async def add_event_core(guild, guild_state, cs, cid, *, actor, member, date, ti
         f"✅ Added event **{name}** on {dt.strftime('%B %d, %Y at %I:%M %p %Z')} in server **{guild.name}**.\n"
         f"• {tier_name}: {len(cs['events'])}/{event_limit if event_limit else '∞'} events"
     )
-    nudge = tier_name == "Free" and len(cs["events"]) >= 2
+    nudge = tier_name == "Free" and len(cs["events"]) >= 1
     return msg, nudge
 
 
@@ -5502,7 +5513,7 @@ async def addevent(interaction: discord.Interaction, date: str, time: str, name:
     )
     await interaction.edit_original_response(content=msg)
     if nudge:
-        await maybe_vote_nudge(interaction, "Event scheduled! Vote on Top.gg to unlock 5 events.")
+        await maybe_vote_nudge(interaction, "Event scheduled! Vote on Top.gg to unlock 3 events.")
 
 
 
