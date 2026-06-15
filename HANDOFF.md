@@ -109,17 +109,11 @@ hook + Chrome and drove all four flows — **all PASS**:
 > Discord Developer Portal before reusing.
 
 ## ▶️ REMAINING
-- **NEXT UP — perms-warning copy tweak** (small, from the verify findings): in
-  `/seteventchannel` the `extra` warning ("I'm missing some permissions in this
-  channel, so the countdown may not work yet") fires whenever `missing_channel_perms`
-  returns ANY perm — even non-critical ones (e.g. read_message_history /
-  mention_everyone) — so it showed even though the countdown posted + pinned fine.
-  Fix: name the specific missing perm(s) and/or only show the alarming "may not work
-  yet" wording when a perm that actually blocks send/embed/pin is missing; otherwise
-  a softer "optional perms missing" note. Same generic warning is reused elsewhere
-  via `notify_owner_missing_perms` — scope this tweak to the `/seteventchannel`
-  user-facing `extra` string unless you want a broader pass.
-- **Themes revamp** (the "LAST phase"): preview-before-apply, seasonal/limited Pro
+- ✅ DONE `ad62bf4` — perms-warning copy tweak: `classify_missing_perms()` splits
+  blocking (view/send/embed → strong warning + owner DM) from degraded
+  (manage_messages/read_message_history → soft note, no owner DM); both name the
+  exact perm. +`tests/test_perms_classify.py`. (Not yet re-verified live.)
+- **NEXT UP — Themes revamp** (the "LAST phase"): preview-before-apply, seasonal/limited Pro
   themes, new themes (Birthday/Baby, Wedding, Game Launch, School/Exam), Pro
   build-your-own. The `/countdown` → Theme Select is the natural surface.
 - **Go-live** (see procedure below) once themes are in or deferred.
@@ -135,6 +129,7 @@ python tests/test_engine.py                         # startup migration + loop (
 python tests/test_resolve_channel.py                # channel resolver (10)
 python tests/test_countdown_hub.py                  # /countdown hub (7)
 python tests/test_event_hub.py                      # /event hub + add_event_core (7)
+python tests/test_perms_classify.py                 # perms warning split (6)
 python -m py_compile chromie.py                     # syntax check
 ```
 Tests import `chromie` with a **temp `CHROMIE_DATA_PATH`** so they never touch prod.
