@@ -2305,6 +2305,22 @@ THEMES: Dict[str, Dict[str, Any]] = {
         "remindall_templates": ["{emoji} 📚 **STUDY REMINDER:** {event} in **{time_left}** • {date}", "{emoji} ✏️ **TEST ALERT:** {event} in **{time_left}** ({date})", "{emoji} ⏰ **DEADLINE SOON:** {event} in **{time_left}** • {date}", "{emoji} 🧠 **REVISE NOW:** {event} in **{time_left}** 📖 • {date}", "{emoji} 🎓 **HEADS UP:** {event} in **{time_left}** ({date})"],
         "start_blast_templates": ["📚 🎓 **GO TIME!** 🎓 **{event} IS HERE—YOU'VE GOT THIS!**", "✏️ **TEST TIME:** {event} **STARTS NOW** — show what you know!", "🧠 **BRAIN ONLINE:** {event} **TODAY** — deep breath, you studied 📖", "⏰ **DEADLINE NOW:** {event} **RIGHT NOW** — submit it! ✅", "🎓 **HOME STRETCH:** {event} **LIVE** — go ace it! 📚", "☕ **FINAL PUSH:** {event} **NOW** — one last sprint! ✏️"],
     },
+    "family": {
+        "label": "Family & Kids",
+        "supporter_only": True,
+        "color": discord.Color.from_rgb(255, 145, 77),
+        "pin_title_pool": ["🧸 **FAMILY COUNTDOWN** • Big Days Ahead", "🗓️ **KIDS' CALENDAR** • What's Coming Up", "🎒 **SCHEDULE CENTRAL** • Family Edition", "⭐ **UPCOMING ADVENTURES** • Mark the Day", "🚸 **THE FAMILY PLANNER** • Events Loaded", "🎈 **LITTLE MILESTONES** • Countdown Board", "📌 **DON'T-FORGET BOARD** • Family Events"],
+        "event_emoji_pool": ["🧸", "🎒", "⭐", "🎈", "🚸", "🎨", "⚽", "🗓️"],
+        "milestone_emoji_pool": ["🧸", "🎒", "⭐", "🎈", "🎨", "🗓️"],
+        "milestone_templates": {
+            "default": ["{emoji} 🗓️ **COMING UP:** {event} in **{days} days** ({time_left}) • {date}", "{emoji} 🎒 **MARK THE CALENDAR:** {event} — **{days} days** to go ({time_left})", "{emoji} ⭐ **BIG DAY INCOMING:** {event} in **{days} days** • Get ready ({time_left}) • {date}", "{emoji} 🎈 **FAMILY HEADS-UP:** {event} — **{days} days** away ({time_left})", "{emoji} 🚸 **DON'T FORGET:** {event} in **{days} days** ({time_left}) • {date}", "{emoji} 🎨 **SAVE THE DATE:** {event} — **{days} days** until the fun ({time_left})", "{emoji} 🧸 **COUNTDOWN ON:** {event} in **{days} days** • So close! ({time_left}) • {date}", "{emoji} ⚽ **ON THE SCHEDULE:** {event} — **{days} days** and counting ({time_left})"],
+            "one_day": ["{emoji} 🗓️ **TOMORROW:** {event} — lay everything out tonight 🌙 ({time_left}) • {date}", "{emoji} 🎒 **BIG DAY TOMORROW:** {event} • Bags packed? ({time_left})", "{emoji} ⭐ **ALMOST HERE:** {event} tomorrow — early night! ({time_left}) • {date}", "{emoji} 🎈 **ONE MORE SLEEP:** {event} tomorrow ({time_left})", "{emoji} 🚸 **READY FOR TOMORROW?** {event} • Snacks + shoes set ({time_left}) • {date}", "{emoji} 🎨 **TOMORROW'S THE DAY:** {event} — can't wait! ({time_left})"],
+            "zero_day": ["{emoji} ⭐ **TODAY'S THE DAY:** {event} is here! 🎉 ({time_left}) • {date}", "{emoji} 🎈 **IT'S HAPPENING:** {event} **TODAY** — have fun! ({time_left})", "{emoji} 🗓️ **GO TIME:** {event} **NOW** ({time_left}) • {date}", "{emoji} 🎒 **OUT THE DOOR:** {event} **TODAY** — you've got this! ({time_left})", "{emoji} 🧸 **THE BIG DAY:** {event} **RIGHT NOW** 🎉 ({time_left})"],
+        },
+        "repeat_templates": ["{emoji} 🔁 **EVERY TIME:** {event} comes around in **{time_left}** 🗓️ • {date}", "{emoji} 🔁 **REGULAR THING:** {event} again in **{time_left}** • {date}", "{emoji} 🔁 **BACK ON THE SCHEDULE:** {event} in **{time_left}** ({date})", "{emoji} 🔁 **NEXT ONE:** {event} in **{time_left}** ⭐ • {date}", "{emoji} 🔁 **ROUND AGAIN:** {event} in **{time_left}** • {date}"],
+        "remindall_templates": ["{emoji} 📣 **FAMILY REMINDER:** {event} in **{time_left}** • {date}", "{emoji} 🗓️ **HEADS UP:** {event} in **{time_left}** ({date})", "{emoji} 🎒 **DON'T FORGET:** {event} in **{time_left}** • {date}", "{emoji} ⭐ **COMING SOON:** {event} in **{time_left}** 🎈 • {date}", "{emoji} 🚸 **MARK IT:** {event} in **{time_left}** ({date})"],
+        "start_blast_templates": ["🧸 ⭐ **TODAY'S THE DAY!** ⭐ **{event} IS HERE — HAVE FUN!**", "🎈 **IT'S HAPPENING:** {event} **STARTS NOW** 🎉", "🗓️ **GO TIME:** {event} **TODAY** — out the door! 🎒", "⭐ **BIG DAY:** {event} **RIGHT NOW** — enjoy every minute! 🎨", "🎉 **HOORAY:** {event} **NOW** — make memories! 🧸", "🚸 **OFF WE GO:** {event} **STARTS NOW** — have a blast! ⚽"],
+    },
 }
 
 FOOTER_POOLS: Dict[str, List[str]] = {
@@ -2349,6 +2365,7 @@ _THEME_LABELS: Dict[str, str] = {
     "wedding": "Wedding 💍",
     "gamelaunch": "Game Launch 🚀",
     "exam": "Exam Season 📚",
+    "family": "Family & Kids 🧸",
 }
 
 
@@ -2555,6 +2572,13 @@ THEME_LAYOUTS = {
         "footer": "Updated every minute • Start early, stress less",
         "color": discord.Color.from_rgb(245, 158, 66),
         "emoji": "✏️",
+    },
+    "family": {
+        "title": "🧸 Family Countdown Board",
+        "subtitle": "Upcoming days the whole family's waiting for.",
+        "footer": "Updated every minute • Never miss a big day",
+        "color": discord.Color.from_rgb(255, 145, 77),
+        "emoji": "⭐",
     },
 }
 
