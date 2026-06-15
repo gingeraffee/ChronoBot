@@ -2693,12 +2693,6 @@ def build_embed_for_channel(channel_state: dict, guild_state: dict) -> discord.E
         header_lines.append(custom_intro)
     if theme_subtitle:
         header_lines.append(theme_subtitle)
-    
-    # Add Pro/Supporter status indicators (from spec)
-    supporter_status = "✅ Supporter" if has_active_vote_guild(guild_state) else "🔒 Supporter"
-    pro_status_txt = get_pro_status_text(guild_state)
-    status_line = f"**Status:** {supporter_status} • {pro_status_txt}"
-    header_lines.append(status_line)
 
     header = "\n".join(header_lines).strip() or "📅 Upcoming events:"
     footer = layout.get("footer", "")
