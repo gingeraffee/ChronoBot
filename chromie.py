@@ -2233,6 +2233,70 @@ THEMES: Dict[str, Dict[str, Any]] = {
         "remindall_templates": ["{emoji} 🎉 **PARTY REMINDER:** {event} in **{time_left}** • Get ready! ({date})", "{emoji} 🏆 **VICTORY ALERT:** {event} in **{time_left}** • Main moment ({date})", "{emoji} ✨ **SPARKLE CHECK:** {event} in **{time_left}** • Shine bright ({date})", "{emoji} 🎊 **CONFETTI ALERT:** {event} in **{time_left}** • Celebration incoming ({date})", "{emoji} 🥳 **GOOD TIMES:** {event} in **{time_left}** • Get hyped ({date})"],
         "start_blast_templates": ["🎉 🎊 **PARTY TIME!** 🎊 **{event} IS HERE—LET'S CELEBRATE!**", "🥳 **CONFETTI DROP:** {event} **STARTS NOW** 🎉 • Good times", "🍾 **TOAST RAISED:** {event} **BEGINS NOW**—Cheers! 🌟", "🏆 **VICTORY:** {event} **RIGHT NOW** • You made it! 🎊", "✨ **SPARKLE MOMENT:** {event} **LIVE NOW** • Main event! 🎈", "🎈 **BALLOON DROP:** {event} **NOW**—Let's celebrate! 🎉"],
     },
+    "birthday": {
+        "label": "Birthday & Baby",
+        "supporter_only": True,
+        "color": discord.Color.from_rgb(255, 105, 180),
+        "pin_title_pool": ["🎂 **BIRTHDAY COUNTDOWN** • Cake Incoming", "🎈 **PARTY PREP** • Big Day Tracker", "🥳 **ANOTHER TRIP AROUND THE SUN** • Loading", "🍰 **CAKE O'CLOCK** • Celebration Board", "🎁 **GIFT QUEUE** • Special Day Ahead", "👶 **NEW ARRIVAL** • Baby Watch Active", "✨ **MAKE A WISH** • Countdown Central"],
+        "event_emoji_pool": ["🎂", "🎈", "🥳", "🍰", "🎁", "👶", "✨", "🎉"],
+        "milestone_emoji_pool": ["🎂", "🎈", "🥳", "🍰", "🎁", "✨"],
+        "milestone_templates": {
+            "default": ["{emoji} 🎂 **CAKE COUNTDOWN:** {event} in **{days} days** ({time_left}) • {date}", "{emoji} 🎈 **PARTY PREP:** {event} — **{days} days** to the big day ({time_left})", "{emoji} 🎁 **GIFT QUEUE:** {event} in **{days} days** • Start shopping ({time_left}) • {date}", "{emoji} 🥳 **HYPE RISING:** {event} — **{days} days** until we celebrate ({time_left})", "{emoji} 🍰 **SWEET TIMING:** {event} in **{days} days** • Cake on standby ({time_left}) • {date}", "{emoji} 👶 **BABY WATCH:** {event} — **{days} days** until the arrival ({time_left})", "{emoji} ✨ **MAKE A WISH:** {event} in **{days} days** • Candles loading ({time_left}) • {date}", "{emoji} 🎉 **SPECIAL DAY:** {event} — **{days} days** and counting ({time_left})"],
+            "one_day": ["{emoji} 🎂 **BIRTHDAY TOMORROW:** {event} — one more sleep 🌙 ({time_left}) • {date}", "{emoji} 🎈 **PARTY TOMORROW:** {event} • Blow up the balloons ({time_left})", "{emoji} 🎁 **GIFTS READY:** {event} tomorrow — wrap it up 🎀 ({time_left}) • {date}", "{emoji} 🍰 **CAKE INCOMING:** {event} tomorrow • Chill the bubbly ({time_left})", "{emoji} 👶 **ALMOST HERE:** {event} tomorrow — bags packed? ({time_left}) • {date}", "{emoji} ✨ **WISH LOADING:** {event} tomorrow • Get ready to celebrate ({time_left})"],
+            "zero_day": ["{emoji} 🎂 **HAPPY DAY:** {event} **IS TODAY** 🎉 ({time_left}) • {date}", "{emoji} 🎈 **PARTY TIME:** {event} **STARTS NOW** — confetti! ({time_left})", "{emoji} 🥳 **MAKE A WISH:** {event} **TODAY** — candles lit! ({time_left}) • {date}", "{emoji} 🍰 **CAKE CUT:** {event} **RIGHT NOW** — let them eat cake 🎂 ({time_left})", "{emoji} 👶 **THE DAY IS HERE:** {event} **NOW** — welcome! ({time_left})"],
+        },
+        "repeat_templates": ["{emoji} 🔁 **ANOTHER YEAR:** {event} comes around in **{time_left}** 🎂 • {date}", "{emoji} 🔁 **CELEBRATION LOOP:** {event} again in **{time_left}** • {date}", "{emoji} 🔁 **CAKE CYCLE:** {event} in **{time_left}** 🍰 • {date}", "{emoji} 🔁 **PARTY REPEATS:** {event} in **{time_left}** 🎈 ({date})", "{emoji} 🔁 **NEXT BIG DAY:** {event} in **{time_left}** • {date}"],
+        "remindall_templates": ["{emoji} 🎂 **BIRTHDAY REMINDER:** {event} in **{time_left}** • {date}", "{emoji} 🎁 **GIFT ALERT:** {event} in **{time_left}** — got something? ({date})", "{emoji} 🎈 **PARTY CHECK:** {event} in **{time_left}** 🥳 • {date}", "{emoji} 🍰 **CAKE WATCH:** {event} in **{time_left}** • {date}", "{emoji} ✨ **WISH SOON:** {event} in **{time_left}** ({date})"],
+        "start_blast_templates": ["🎂 🎉 **HAPPY DAY!** 🎉 **{event} IS HERE—LET'S CELEBRATE!**", "🎈 **PARTY TIME:** {event} **STARTS NOW** 🥳 • Balloons up!", "🍰 **CAKE O'CLOCK:** {event} **RIGHT NOW** — make a wish ✨", "🎁 **GIFTS UNLOCKED:** {event} **TODAY** — the big day! 🎂", "👶 **WELCOME:** {event} **NOW** — the wait is over! 💕", "✨ **MAKE A WISH:** {event} **LIVE** — candles lit! 🎂"],
+    },
+    "wedding": {
+        "label": "Wedding",
+        "supporter_only": True,
+        "color": discord.Color.from_rgb(214, 174, 148),
+        "pin_title_pool": ["💍 **THE BIG DAY** • Countdown to I Do", "💐 **WEDDING WATCH** • Save the Date", "🤍 **HAPPILY EVER AFTER** • Loading", "🥂 **TOAST PENDING** • Celebration Board", "💒 **AISLE TIME** • Ceremony Tracker", "💖 **TWO BECOME ONE** • Countdown Central", "🔔 **WEDDING BELLS** • Big Day Ahead"],
+        "event_emoji_pool": ["💍", "💐", "🤍", "🥂", "💒", "💖", "🔔", "✨"],
+        "milestone_emoji_pool": ["💍", "💐", "🤍", "🥂", "💒", "✨"],
+        "milestone_templates": {
+            "default": ["{emoji} 💍 **COUNTDOWN TO I DO:** {event} in **{days} days** ({time_left}) • {date}", "{emoji} 💐 **SAVE THE DATE:** {event} — **{days} days** to go ({time_left})", "{emoji} 💒 **AISLE PREP:** {event} in **{days} days** • RSVPs rolling in ({time_left}) • {date}", "{emoji} 🥂 **TOAST PENDING:** {event} — **{days} days** until cheers ({time_left})", "{emoji} 🤍 **HAPPILY EVER AFTER:** {event} in **{days} days** ({time_left}) • {date}", "{emoji} 💖 **LOVE IS IN THE AIR:** {event} — **{days} days** away ({time_left})", "{emoji} 🔔 **WEDDING BELLS:** {event} in **{days} days** • Almost there ({time_left}) • {date}", "{emoji} ✨ **THE BIG DAY:** {event} — **{days} days** and counting ({time_left})"],
+            "one_day": ["{emoji} 💍 **TOMORROW: I DO:** {event} — final touches 🌙 ({time_left}) • {date}", "{emoji} 💐 **BIG DAY TOMORROW:** {event} • Press the suit, steam the dress ({time_left})", "{emoji} 💒 **AISLE READY:** {event} tomorrow — rehearsal done ({time_left}) • {date}", "{emoji} 🥂 **TOAST TOMORROW:** {event} • Chill the champagne ({time_left})", "{emoji} 🤍 **ONE MORE SLEEP:** {event} tomorrow — happily ever after loading ({time_left}) • {date}", "{emoji} 🔔 **BELLS TOMORROW:** {event} • Get ready to celebrate ({time_left})"],
+            "zero_day": ["{emoji} 💍 **TODAY YOU SAY I DO:** {event} **IS HERE** ({time_left}) • {date}", "{emoji} 💒 **WALK THE AISLE:** {event} **STARTS NOW** 🤍 ({time_left})", "{emoji} 🥂 **RAISE A GLASS:** {event} **TODAY** — cheers to forever! ({time_left}) • {date}", "{emoji} 💐 **HAPPILY EVER AFTER:** {event} **RIGHT NOW** 💖 ({time_left})", "{emoji} 🔔 **WEDDING BELLS RING:** {event} **NOW** — congrats! ({time_left})"],
+        },
+        "repeat_templates": ["{emoji} 🔁 **ANNIVERSARY LOOP:** {event} returns in **{time_left}** 💍 • {date}", "{emoji} 🔁 **LOVE ON REPEAT:** {event} again in **{time_left}** • {date}", "{emoji} 🔁 **FOREVER CYCLE:** {event} in **{time_left}** 🤍 • {date}", "{emoji} 🔁 **TOAST AGAIN:** {event} in **{time_left}** 🥂 ({date})", "{emoji} 🔁 **NEXT CELEBRATION:** {event} in **{time_left}** • {date}"],
+        "remindall_templates": ["{emoji} 💍 **WEDDING REMINDER:** {event} in **{time_left}** • {date}", "{emoji} 💐 **SAVE THE DATE:** {event} in **{time_left}** ({date})", "{emoji} 🥂 **TOAST SOON:** {event} in **{time_left}** 🤍 • {date}", "{emoji} 💒 **CEREMONY ALERT:** {event} in **{time_left}** • {date}", "{emoji} 🔔 **BELLS SOON:** {event} in **{time_left}** ({date})"],
+        "start_blast_templates": ["💍 🤍 **IT'S TIME!** 🤍 **{event} IS HERE—HAPPILY EVER AFTER!**", "💒 **WALK THE AISLE:** {event} **STARTS NOW** 💐 • Here comes the moment", "🥂 **RAISE A GLASS:** {event} **RIGHT NOW** — to forever! 🤍", "🔔 **WEDDING BELLS:** {event} **TODAY** — congratulations! 💖", "💐 **LOVE WINS:** {event} **LIVE NOW** — the big day! 💍", "✨ **FOREVER STARTS:** {event} **NOW** — cheers! 🥂"],
+    },
+    "gamelaunch": {
+        "label": "Game Launch",
+        "supporter_only": True,
+        "color": discord.Color.from_rgb(0, 209, 178),
+        "pin_title_pool": ["🚀 **LAUNCH SEQUENCE** • Release Timer Active", "🎮 **DROP INCOMING** • Day-One Countdown", "🕹️ **PRESS START SOON** • Release Board", "💾 **PRELOAD READY** • Servers Spinning Up", "🛰️ **GO FOR LAUNCH** • Countdown Central", "🔓 **UNLOCK TIMER** • Early Access Ahead", "🎯 **DAY ONE** • Release Tracker"],
+        "event_emoji_pool": ["🚀", "🎮", "🕹️", "💾", "🛰️", "🔓", "🎯", "⚡"],
+        "milestone_emoji_pool": ["🚀", "🎮", "🕹️", "💾", "⚡", "🔓"],
+        "milestone_templates": {
+            "default": ["{emoji} 🚀 **LAUNCH WINDOW:** {event} drops in **{days} days** ({time_left}) • {date}", "{emoji} 🎮 **DAY-ONE COUNTDOWN:** {event} — **{days} days** to release ({time_left})", "{emoji} 💾 **PRELOAD ALERT:** {event} in **{days} days** • Clear some storage ({time_left}) • {date}", "{emoji} 🔓 **UNLOCK TIMER:** {event} — **{days} days** until go-live ({time_left})", "{emoji} 🛰️ **GO FOR LAUNCH:** {event} in **{days} days** ({time_left}) • {date}", "{emoji} ⚡ **HYPE METER:** {event} — **{days} days** away, charging up ({time_left})", "{emoji} 🕹️ **PRESS START SOON:** {event} in **{days} days** • Controllers ready ({time_left}) • {date}", "{emoji} 🎯 **RELEASE INCOMING:** {event} — **{days} days** and counting ({time_left})"],
+            "one_day": ["{emoji} 🚀 **T-MINUS 1 DAY:** {event} launches tomorrow 🌙 ({time_left}) • {date}", "{emoji} 💾 **PRELOAD NOW:** {event} drops tomorrow • Download tonight ({time_left})", "{emoji} 🎮 **DAY-ONE TOMORROW:** {event} • Clear your schedule ({time_left}) • {date}", "{emoji} 🔓 **UNLOCK TOMORROW:** {event} — servers warming up ({time_left})", "{emoji} ⚡ **FINAL CHARGE:** {event} tomorrow • Hype at max ({time_left}) • {date}", "{emoji} 🕹️ **ONE MORE SLEEP:** {event} tomorrow — press start soon ({time_left})"],
+            "zero_day": ["{emoji} 🚀 **LIFTOFF:** {event} **IS LIVE NOW** ({time_left}) • {date}", "{emoji} 🎮 **PRESS START:** {event} **DROPPED** — go go go! ({time_left})", "{emoji} 🔓 **SERVERS UNLOCKED:** {event} **LIVE TODAY** ⚡ ({time_left}) • {date}", "{emoji} 💾 **IT'S OUT:** {event} **RIGHT NOW** — download + play! ({time_left})", "{emoji} 🛰️ **WE HAVE LAUNCH:** {event} **NOW** — see you online! ({time_left})"],
+        },
+        "repeat_templates": ["{emoji} 🔁 **NEXT DROP:** {event} returns in **{time_left}** 🚀 • {date}", "{emoji} 🔁 **PATCH CYCLE:** {event} again in **{time_left}** • {date}", "{emoji} 🔁 **SEASON RESET:** {event} in **{time_left}** 🎮 • {date}", "{emoji} 🔁 **RELOAD:** {event} in **{time_left}** ⚡ ({date})", "{emoji} 🔁 **NEXT UPDATE:** {event} in **{time_left}** • {date}"],
+        "remindall_templates": ["{emoji} 🚀 **LAUNCH REMINDER:** {event} in **{time_left}** • {date}", "{emoji} 🎮 **DON'T MISS THE DROP:** {event} in **{time_left}** ({date})", "{emoji} 💾 **PRELOAD SOON:** {event} in **{time_left}** ⚡ • {date}", "{emoji} 🔓 **UNLOCK SOON:** {event} in **{time_left}** • {date}", "{emoji} 🕹️ **GET READY:** {event} in **{time_left}** ({date})"],
+        "start_blast_templates": ["🚀 ⚡ **LIFTOFF!** ⚡ **{event} IS LIVE—GO PLAY!**", "🎮 **PRESS START:** {event} **DROPPED NOW** 🕹️ • Servers are up", "🔓 **UNLOCKED:** {event} **LIVE NOW** — download + dive in! 💾", "🛰️ **WE HAVE LAUNCH:** {event} **RIGHT NOW** — see you online! ⚡", "💾 **IT'S OUT:** {event} **TODAY** — day-one squad assemble! 🎮", "🎯 **DAY ONE:** {event} **NOW** — let's go! 🚀"],
+    },
+    "exam": {
+        "label": "Exam Season",
+        "supporter_only": True,
+        "color": discord.Color.from_rgb(245, 158, 66),
+        "pin_title_pool": ["📚 **EXAM COUNTDOWN** • Crunch Timer Active", "✏️ **STUDY MODE** • Deadline Tracker", "⏰ **FINALS WATCH** • Countdown Central", "📝 **TEST DAY AHEAD** • Revision Board", "🧠 **BRAIN PREP** • Study Timer", "📖 **CRAM SCHEDULE** • Big Test Loading", "🎓 **THE HOME STRETCH** • Exam Tracker"],
+        "event_emoji_pool": ["📚", "✏️", "📝", "⏰", "🧠", "📖", "🎓", "☕"],
+        "milestone_emoji_pool": ["📚", "✏️", "📝", "🧠", "⏰", "📖"],
+        "milestone_templates": {
+            "default": ["{emoji} 📚 **STUDY COUNTDOWN:** {event} in **{days} days** ({time_left}) • {date}", "{emoji} ✏️ **REVISION TIMER:** {event} — **{days} days** to go ({time_left})", "{emoji} 🧠 **BRAIN PREP:** {event} in **{days} days** • Flashcards ready ({time_left}) • {date}", "{emoji} 📝 **TEST AHEAD:** {event} — **{days} days** until the big one ({time_left})", "{emoji} 📖 **CRAM PLAN:** {event} in **{days} days** • Pace yourself ({time_left}) • {date}", "{emoji} ⏰ **DEADLINE WATCH:** {event} — **{days} days** left ({time_left})", "{emoji} 🎓 **HOME STRETCH:** {event} in **{days} days** • You've got this ({time_left}) • {date}", "{emoji} ☕ **STUDY FUEL:** {event} — **{days} days** out, keep going ({time_left})"],
+            "one_day": ["{emoji} 📚 **EXAM TOMORROW:** {event} — final review 🌙 ({time_left}) • {date}", "{emoji} ✏️ **TEST DAY TOMORROW:** {event} • Sharpen the pencils ({time_left})", "{emoji} 🧠 **LAST REVISION:** {event} tomorrow — rest your brain too ({time_left}) • {date}", "{emoji} ⏰ **DEADLINE TOMORROW:** {event} • Submit on time ({time_left})", "{emoji} 📖 **ONE MORE SLEEP:** {event} tomorrow — you're ready ({time_left}) • {date}", "{emoji} ☕ **FINAL PUSH:** {event} tomorrow • Early night recommended ({time_left})"],
+            "zero_day": ["{emoji} 📚 **EXAM DAY:** {event} **IS TODAY** — go ace it! ({time_left}) • {date}", "{emoji} ✏️ **TEST TIME:** {event} **NOW** — you studied for this! ({time_left})", "{emoji} 🧠 **BRAIN ONLINE:** {event} **TODAY** — deep breaths 🎓 ({time_left}) • {date}", "{emoji} ⏰ **DEADLINE IS NOW:** {event} **TODAY** — submit it! ({time_left})", "{emoji} 🎓 **GO GET IT:** {event} **RIGHT NOW** — you've got this! ({time_left})"],
+        },
+        "repeat_templates": ["{emoji} 🔁 **NEXT EXAM:** {event} comes around in **{time_left}** 📚 • {date}", "{emoji} 🔁 **STUDY CYCLE:** {event} again in **{time_left}** • {date}", "{emoji} 🔁 **DEADLINE LOOP:** {event} in **{time_left}** ⏰ • {date}", "{emoji} 🔁 **NEXT TEST:** {event} in **{time_left}** ✏️ ({date})", "{emoji} 🔁 **REVISION REPEATS:** {event} in **{time_left}** • {date}"],
+        "remindall_templates": ["{emoji} 📚 **STUDY REMINDER:** {event} in **{time_left}** • {date}", "{emoji} ✏️ **TEST ALERT:** {event} in **{time_left}** ({date})", "{emoji} ⏰ **DEADLINE SOON:** {event} in **{time_left}** • {date}", "{emoji} 🧠 **REVISE NOW:** {event} in **{time_left}** 📖 • {date}", "{emoji} 🎓 **HEADS UP:** {event} in **{time_left}** ({date})"],
+        "start_blast_templates": ["📚 🎓 **GO TIME!** 🎓 **{event} IS HERE—YOU'VE GOT THIS!**", "✏️ **TEST TIME:** {event} **STARTS NOW** — show what you know!", "🧠 **BRAIN ONLINE:** {event} **TODAY** — deep breath, you studied 📖", "⏰ **DEADLINE NOW:** {event} **RIGHT NOW** — submit it! ✅", "🎓 **HOME STRETCH:** {event} **LIVE** — go ace it! 📚", "☕ **FINAL PUSH:** {event} **NOW** — one last sprint! ✏️"],
+    },
 }
 
 FOOTER_POOLS: Dict[str, List[str]] = {
@@ -2273,6 +2337,10 @@ _THEME_LABELS: Dict[str, str] = {
     "minimal": "Minimalist ▫️",
     "school": "School 📚",
     "spooky": "Spooky 🎃",
+    "birthday": "Birthday & Baby 🎂",
+    "wedding": "Wedding 💍",
+    "gamelaunch": "Game Launch 🚀",
+    "exam": "Exam Season 📚",
 }
 
 
@@ -2451,6 +2519,34 @@ THEME_LAYOUTS = {
         "footer": "Updated every minute • The vibes are haunted",
         "color": discord.Color.from_rgb(249, 115, 22),
         "emoji": "🕯️",
+    },
+    "birthday": {
+        "title": "🎂 Birthday Countdown Board",
+        "subtitle": "Cakes, gifts, and big-day vibes incoming.",
+        "footer": "Updated every minute • Don’t forget the candles",
+        "color": discord.Color.from_rgb(255, 105, 180),
+        "emoji": "🎈",
+    },
+    "wedding": {
+        "title": "💍 Countdown to I Do",
+        "subtitle": "Save the date — happily ever after loading.",
+        "footer": "Updated every minute • Something timed, something blue",
+        "color": discord.Color.from_rgb(214, 174, 148),
+        "emoji": "💐",
+    },
+    "gamelaunch": {
+        "title": "🚀 Launch Countdown",
+        "subtitle": "Day-one drops and release timers.",
+        "footer": "Updated every minute • Preload before you’re late",
+        "color": discord.Color.from_rgb(0, 209, 178),
+        "emoji": "🎮",
+    },
+    "exam": {
+        "title": "📚 Exam Season Countdown",
+        "subtitle": "Deadlines, finals, and focus sessions.",
+        "footer": "Updated every minute • Start early, stress less",
+        "color": discord.Color.from_rgb(245, 158, 66),
+        "emoji": "✏️",
     },
 }
 
