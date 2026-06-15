@@ -786,6 +786,42 @@ def can_add_countdown_channel(guild_state: dict, channel_id: int) -> bool:
     return count_countdown_channels(guild_state) < FREE_CHANNEL_LIMIT
 
 
+def resolve_event_channel(guild_state: dict, channel_id):
+    """Pick which countdown channel a CRUD command (addevent/listevents/…) acts on.
+
+    Returns (channel_id:int, channel_state:dict) or (None, None) if it can't be
+    resolved unambiguously. Resolution order:
+      1. If `channel_id` is itself a countdown channel, use it.
+      2. Else if the guild has exactly ONE countdown channel, use that one. This
+         keeps the single-channel experience working for free servers (and for
+         DM control, where there is no "current channel"): the command can be run
+         anywhere in the server.
+      3. Else (0 channels, or 2+ on Plus) -> (None, None); the caller shows
+         guidance based on count_countdown_channels().
+    """
+    channels = guild_state.get("channels", {})
+    cid_str = str(channel_id)
+    if cid_str.isdigit() and cid_str in channels:
+        return int(cid_str), channels[cid_str]
+    real = [(int(c), b) for c, b in channels.items() if c.isdigit()]
+    if len(real) == 1:
+        return real[0]
+    return None, None
+
+
+def no_channel_guidance(guild_state: dict, action_cmd: str) -> str:
+    """User-facing message when resolve_event_channel() can't pick a channel."""
+    if count_countdown_channels(guild_state) == 0:
+        return (
+            "No countdown channel is set up yet.\n"
+            "Run `/seteventchannel` in the channel where you want the countdown."
+        )
+    return (
+        "This server has multiple countdown channels.\n"
+        f"Run `{action_cmd}` **inside** the specific countdown channel you want."
+    )
+
+
 def get_user_links() -> dict:
     return state.setdefault("user_links", {})
 
@@ -2911,6 +2947,38 @@ def build_milestone_mention(channel: discord.TextChannel, guild_state: dict) -> 
 def build_everyone_mention() -> Tuple[str, discord.AllowedMentions]:
     return "@everyone ", discord.AllowedMentions(everyone=True)
 
+async def refresh_countdown_message_for_channel(
+    guild: discord.Guild, channel: discord.TextChannel, channel_state: dict, guild_state: dict
+) -> None:
+    """Edit the pinned countdown for ONE channel in place (no repost/repin).
+
+    Use this for settings tweaks (title/description/theme/etc.) where rebuilding
+    would needlessly delete + resend the pin. Falls back to creating the pin if
+    one doesn't exist yet."""
+    pinned = await get_or_create_pinned_message_for_channel(
+        channel, channel_state, guild_state, allow_create=True
+    )
+    if pinned is None:
+        return
+
+    try:
+        await pinned.edit(embed=build_embed_for_channel(channel_state, guild_state))
+    except discord.NotFound:
+        if channel_state.get("pinned_message_id") == pinned.id:
+            channel_state["pinned_message_id"] = None
+            save_state()
+    except discord.Forbidden:
+        missing = missing_channel_perms(channel, channel.guild)
+        await notify_owner_missing_perms(
+            channel.guild,
+            channel,
+            missing=missing,
+            action="edit/update the pinned countdown message",
+        )
+    except discord.HTTPException as e:
+        print(f"[Guild {guild.id}] Failed to edit pinned message: {e}")
+
+
 async def refresh_countdown_message(guild: discord.Guild, guild_state: dict) -> None:
     ch_id = guild_state.get("event_channel_id")
     if not ch_id:
@@ -2955,8 +3023,11 @@ async def event_index_autocomplete(
         return []
 
     g = get_guild_state(guild.id)
-    tz = get_guild_timezone(g)
-    sort_events(g)
+    _cid, cs = resolve_event_channel(g, interaction.channel_id)
+    if cs is None:
+        return []
+    tz = get_guild_timezone(cs)
+    sort_events(cs)
 
     now = datetime.now(tz)
     cur = (current or "").strip().lower()
@@ -2964,7 +3035,7 @@ async def event_index_autocomplete(
 
     choices: List[app_commands.Choice[int]] = []
 
-    for idx, ev in enumerate(g.get("events", []), start=1):
+    for idx, ev in enumerate(cs.get("events", []), start=1):
         ts = ev.get("timestamp")
         if not isinstance(ts, (int, float)):
             continue
@@ -3573,25 +3644,47 @@ async def seteventchannel(interaction: discord.Interaction):
         return
 
     guild_state = get_guild_state(guild.id)
-
-    old_channel_id = guild_state.get("event_channel_id")
     new_channel = interaction.channel
+    channels = guild_state.setdefault("channels", {})
 
-    # If no-op, don’t spam notifications
-    if old_channel_id and int(old_channel_id) == int(new_channel.id):
+    # If this channel is already a countdown channel, no-op (don't spam).
+    if str(new_channel.id) in channels:
         await interaction.edit_original_response(
-            content="✅ This channel is already the event countdown channel."
+            content="✅ This channel is already a countdown channel."
         )
         return
 
-    guild_state["event_channel_id"] = new_channel.id
-    guild_state["pinned_message_id"] = None
+    # Gate: 1 countdown channel is free; additional channels need Chromie Pro.
+    if not can_add_countdown_channel(guild_state, new_channel.id):
+        embed = discord.Embed(
+            title="💎 Multiple countdown channels are a Chromie Pro feature",
+            description=(
+                "This server already has its free countdown channel. "
+                "With **Chromie Pro ($2.99/month)** you can run an independent "
+                "countdown in *every* channel — each with its own events, theme, "
+                "timezone and digest.\n\n"
+                "Subscribe via **Discord Server Subscription**, then run "
+                "`/seteventchannel` here again. Use `/pro_status` to check status."
+            ),
+            color=discord.Color.orange(),
+        )
+        await interaction.edit_original_response(content=None, embed=embed)
+        return
+
+    # First countdown channel for this guild? Adopt any events the migration
+    # parked under the "unassigned" sentinel (events that existed before a
+    # channel was ever set) so nothing is lost.
+    if "unassigned" in channels:
+        channels[str(new_channel.id)] = channels.pop("unassigned")
+
+    cs = get_channel_state(guild.id, new_channel.id)
+    cs["pinned_message_id"] = None  # force a fresh pin for this channel
 
     # audit fields (optional)
-    guild_state["event_channel_set_by"] = int(interaction.user.id)
-    guild_state["event_channel_set_at"] = int(time.time())
+    cs["event_channel_set_by"] = int(interaction.user.id)
+    cs["event_channel_set_at"] = int(time.time())
 
-    sort_events(guild_state)
+    sort_events(cs)
     save_state()
 
     # Permissions check + owner DM (you already do this)
@@ -3606,13 +3699,16 @@ async def seteventchannel(interaction: discord.Interaction):
                 action="set up the countdown (send + pin + update)",
             )
 
-    # 🔔 NEW: Notify owner + optionally post audit note(s)
+    # 🔔 Notify owner + optionally post an audit note in the channel.
     await notify_event_channel_changed(
         guild,
         actor=interaction.user,
-        old_channel_id=old_channel_id if isinstance(old_channel_id, int) else None,
+        old_channel_id=None,
         new_channel=new_channel,
     )
+
+    # Build the pinned countdown immediately so the channel shows something.
+    await rebuild_pinned_message_for_channel(new_channel, cs, guild_state)
 
     extra = ""
     if missing:
@@ -3622,7 +3718,7 @@ async def seteventchannel(interaction: discord.Interaction):
         )
 
     await interaction.edit_original_response(
-        content="✅ This channel is now the event countdown channel for this server.\nUse `/addevent` to add events." + extra
+        content="✅ This channel is now a countdown channel.\nUse `/addevent` here to add events." + extra
     )
 
 @bot.tree.command(name="linkserver", description="Link yourself to this server for DM control.")
@@ -3805,8 +3901,8 @@ async def addevent(interaction: discord.Interaction, date: str, time: str, name:
             return
 
         guild_state = get_guild_state(guild.id)
-        tz = get_guild_timezone(guild_state)
         is_dm = False
+        target_channel_id = interaction.channel_id
 
     else:
         user_links = get_user_links()
@@ -3839,20 +3935,30 @@ async def addevent(interaction: discord.Interaction, date: str, time: str, name:
             return
 
         guild_state = get_guild_state(guild.id)
-        tz = get_guild_timezone(guild_state)
         is_dm = True
+        target_channel_id = None  # DM has no "current channel"; resolve below
 
-    if not guild_state.get("event_channel_id"):
-        msg = "I don't know which channel to use yet.\nRun `/seteventchannel` in the channel where you want the countdown pinned."
-        if is_dm:
-            msg += "\n(Do this in the linked server.)"
+    # Resolve which countdown channel this event belongs to.
+    cid, cs = resolve_event_channel(guild_state, target_channel_id)
+    if cs is None:
+        if count_countdown_channels(guild_state) == 0:
+            msg = "I don't know which channel to use yet.\nRun `/seteventchannel` in the channel where you want the countdown pinned."
+            if is_dm:
+                msg += "\n(Do this in the linked server.)"
+        else:
+            msg = (
+                "This server has multiple countdown channels.\n"
+                "Run `/addevent` **inside** the specific countdown channel you want to add to."
+            )
         await interaction.edit_original_response(content=msg)
         return
 
-    # EVENT LIMIT ENFORCEMENT (from spec)
+    tz = get_guild_timezone(cs)
+
+    # EVENT LIMIT ENFORCEMENT (from spec) — counted per countdown channel.
     # Only count FUTURE events, not past ones
     now = datetime.now(tz)
-    all_events = guild_state.get("events", [])
+    all_events = cs.get("events", [])
     future_events = [
         ev for ev in all_events 
         if datetime.fromtimestamp(ev.get("timestamp", 0), tz=tz) > now
@@ -3933,7 +4039,7 @@ async def addevent(interaction: discord.Interaction, date: str, time: str, name:
         "timestamp": int(dt.timestamp()),
         "owner_id": interaction.user.id,
         "owner_tag": str(interaction.user),
-        "milestones": guild_state.get("default_milestones", DEFAULT_MILESTONES.copy()).copy(),
+        "milestones": cs.get("default_milestones", DEFAULT_MILESTONES.copy()).copy(),
         "announced_milestones": [],
         "milestone_messages": [],     # ✅ store messages we sent
         "milestones_cleaned": False,  # ✅ prevents repeat attempts
@@ -3952,21 +4058,19 @@ async def addevent(interaction: discord.Interaction, date: str, time: str, name:
         "banner_url": None,
     }
 
-    guild_state["events"].append(event)
-    sort_events(guild_state)
+    cs["events"].append(event)
+    sort_events(cs)
     save_state()
 
-    channel_id = guild_state.get("event_channel_id")
-    if channel_id:
-        channel = await get_text_channel(channel_id)
-        if channel is not None:
-            await rebuild_pinned_message(guild.id, channel, guild_state)
+    channel = await get_text_channel(cid)
+    if channel is not None:
+        await rebuild_pinned_message_for_channel(channel, cs, guild_state)
 
     await interaction.edit_original_response(
-        content=f"✅ Added event **{name}** on {dt.strftime('%B %d, %Y at %I:%M %p %Z')} in server **{guild.name}**.\n• {tier_name}: {len(guild_state['events'])}/{event_limit if event_limit else '∞'} events"
+        content=f"✅ Added event **{name}** on {dt.strftime('%B %d, %Y at %I:%M %p %Z')} in server **{guild.name}**.\n• {tier_name}: {len(cs['events'])}/{event_limit if event_limit else '∞'} events"
     )
     # Only nudge free users who are approaching limit
-    if tier_name == "Free" and len(guild_state["events"]) >= 2:
+    if tier_name == "Free" and len(cs["events"]) >= 2:
         await maybe_vote_nudge(interaction, "Event scheduled! Vote on Top.gg to unlock 5 events.")
 
 
@@ -3977,8 +4081,14 @@ async def listevents(interaction: discord.Interaction):
     guild = interaction.guild
     assert guild is not None
     guild_state = get_guild_state(guild.id)
+    _cid, cs = resolve_event_channel(guild_state, interaction.channel_id)
+    if cs is None:
+        await interaction.response.send_message(
+            no_channel_guidance(guild_state, "/listevents"), ephemeral=True
+        )
+        return
 
-    text = format_events_list(guild_state)
+    text = format_events_list(cs)
     chunks = chunk_text(text, limit=1900)
 
     await interaction.response.send_message(chunks[0], ephemeral=True)
@@ -3993,11 +4103,18 @@ async def nextevent(interaction: discord.Interaction):
     assert guild is not None
 
     g = get_guild_state(guild.id)
-    sort_events(g)
+    _cid, cs = resolve_event_channel(g, interaction.channel_id)
+    if cs is None:
+        await interaction.response.send_message(
+            no_channel_guidance(g, "/nextevent"), ephemeral=True
+        )
+        return
+    sort_events(cs)
 
+    tz = get_guild_timezone(cs)
     now = datetime.now(tz)
     next_ev = None
-    for ev in g.get("events", []):
+    for ev in cs.get("events", []):
         dt = datetime.fromtimestamp(ev["timestamp"], tz=tz)
         if dt > now:
             next_ev = (ev, dt)
@@ -4025,12 +4142,18 @@ async def eventinfo(interaction: discord.Interaction, index: int):
     guild = interaction.guild
     assert guild is not None
     g = get_guild_state(guild.id)
-    ev = get_event_by_index(g, index)
+    _cid, cs = resolve_event_channel(g, interaction.channel_id)
+    if cs is None:
+        await interaction.response.send_message(
+            no_channel_guidance(g, "/eventinfo"), ephemeral=True
+        )
+        return
+    ev = get_event_by_index(cs, index)
     if not ev:
         await interaction.response.send_message("Invalid index. Use `/listevents` to see event numbers.", ephemeral=True)
         return
 
-    tz = get_guild_timezone(g)
+    tz = get_guild_timezone(cs)
     dt = datetime.fromtimestamp(ev["timestamp"], tz=tz)
     now = datetime.now(tz)
     desc, _, passed = compute_time_left(now, dt)
@@ -4078,8 +4201,12 @@ async def removeevent(interaction: discord.Interaction, index: int):
     
     await interaction.response.defer(ephemeral=True)
     guild_state = get_guild_state(guild.id)
-    sort_events(guild_state)
-    events = guild_state.get("events", [])
+    cid, cs = resolve_event_channel(guild_state, interaction.channel_id)
+    if cs is None:
+        await interaction.edit_original_response(content=no_channel_guidance(guild_state, "/removeevent"))
+        return
+    sort_events(cs)
+    events = cs.get("events", [])
 
     if not events:
         await interaction.edit_original_response(content="There are no events to remove.")
@@ -4092,11 +4219,9 @@ async def removeevent(interaction: discord.Interaction, index: int):
     ev = events.pop(index - 1)
     save_state()
 
-    channel_id = guild_state.get("event_channel_id")
-    if channel_id:
-        ch = await get_text_channel(channel_id)
-        if ch:
-            await rebuild_pinned_message(guild.id, ch, guild_state)
+    ch = await get_text_channel(cid)
+    if ch:
+        await rebuild_pinned_message_for_channel(ch, cs, guild_state)
 
     await interaction.edit_original_response(content=f"🗑 Removed event **{ev['name']}**.")
 
@@ -4116,11 +4241,14 @@ async def editevent(interaction: discord.Interaction, index: int, name: Optional
     assert guild is not None
 
     await interaction.response.defer(ephemeral=True)
-    
+
     g = get_guild_state(guild.id)
-    guild_state = g
-    tz = get_guild_timezone(guild_state)
-    ev = get_event_by_index(g, index)
+    cid, cs = resolve_event_channel(g, interaction.channel_id)
+    if cs is None:
+        await interaction.edit_original_response(content=no_channel_guidance(g, "/editevent"))
+        return
+    tz = get_guild_timezone(cs)
+    ev = get_event_by_index(cs, index)
     if not ev:
         await interaction.edit_original_response(content="Invalid index. Use `/listevents`.")
         return
@@ -4156,17 +4284,14 @@ async def editevent(interaction: discord.Interaction, index: int, name: Optional
         ev["announced_milestones"] = []
         ev["announced_repeat_dates"] = []
 
-    sort_events(g)
+    sort_events(cs)
     save_state()
 
-    guild_state = g
-    ch_id = g.get("event_channel_id")
-    if ch_id:
-        ch = await get_text_channel(ch_id)
-        if ch:
-            await refresh_countdown_message(guild, guild_state)
+    ch = await get_text_channel(cid)
+    if ch:
+        await refresh_countdown_message_for_channel(guild, ch, cs, g)
 
-    dt_final = datetime.fromtimestamp(ev["timestamp"], tz=get_guild_timezone(guild_state))
+    dt_final = datetime.fromtimestamp(ev["timestamp"], tz=get_guild_timezone(cs))
     await interaction.edit_original_response(content=
         f"✅ Updated event #{index}: **{ev['name']}**\n"
         f"🗓️ {dt_final.strftime('%B %d, %Y at %I:%M %p %Z')}"
@@ -4262,14 +4387,13 @@ async def remindall(interaction: discord.Interaction, index: Optional[int] = Non
     await interaction.response.defer(ephemeral=True)
     
     g = get_guild_state(guild.id)
-    sort_events(g)
-
-    channel_id = g.get("event_channel_id")
-    if not channel_id:
-        await interaction.edit_original_response(content="No event channel set. Run `/seteventchannel` first.")
+    cid, cs = resolve_event_channel(g, interaction.channel_id)
+    if cs is None:
+        await interaction.edit_original_response(content=no_channel_guidance(g, "/remindall"))
         return
+    sort_events(cs)
 
-    channel = await get_text_channel(channel_id)
+    channel = await get_text_channel(cid)
     if channel is None:
         await interaction.edit_original_response(content="I couldn't access the configured event channel.")
         return
@@ -4281,23 +4405,19 @@ async def remindall(interaction: discord.Interaction, index: Optional[int] = Non
 
     ev = None
     dt = None
-    
-    tz_name = g.get("timezone") or "UTC"
-    try:
-        tz = ZoneInfo(tz_name)
-    except Exception:
-        tz = ZoneInfo("UTC")
-        
+
+    tz = get_guild_timezone(cs)
+
     now = datetime.now(tz)
 
     if index is not None:
-        ev = get_event_by_index(g, index)
+        ev = get_event_by_index(cs, index)
         if not ev:
             await interaction.edit_original_response(content="Invalid index. Use `/listevents`.")
             return
         dt = datetime.fromtimestamp(ev["timestamp"], tz=tz)
     else:
-        for candidate in g.get("events", []):
+        for candidate in cs.get("events", []):
             cdt = datetime.fromtimestamp(candidate["timestamp"], tz=tz)
             if cdt > now:
                 ev = candidate
@@ -4324,10 +4444,10 @@ async def remindall(interaction: discord.Interaction, index: Optional[int] = Non
     if perms.mention_everyone:
         mention_prefix, allowed = build_everyone_mention()
     else:
-        mention_prefix, allowed = build_milestone_mention(channel, g)
+        mention_prefix, allowed = build_milestone_mention(channel, cs)
 
     date_str = dt.strftime("%B %d, %Y at %I:%M %p %Z")
-    body = build_remindall_message(g, event_name=ev["name"], time_left=desc, date_str=date_str)
+    body = build_remindall_message(cs, event_name=ev["name"], time_left=desc, date_str=date_str)
     msg = f"{mention_prefix}{body}"
 
     try:
