@@ -36,6 +36,7 @@ TOKEN = os.getenv("DISCORD_BOT_TOKEN", "").strip()
 
 FAQ_URL = "https://gingeraffee.github.io/chronobot-faq/"
 SUPPORT_SERVER_URL = os.getenv("CHROMIE_SUPPORT_SERVER_URL", "").strip()  # set in Render/hosting env
+LOG_CHANNEL_ID = os.getenv("CHROMIE_LOG_CHANNEL_ID", "").strip()  # optional: mirror join/leave logs to this channel
 
 EMBED_COLOR = discord.Color.from_rgb(140, 82, 255)  # ChronoBot purple
 
@@ -1678,8 +1679,25 @@ async def on_ready():
             print(f"⚠️ Error posting to Top.gg: {e}")
 
 
+async def post_guild_log(line: str):
+    """Print a join/leave line to the Render logs, and (if CHROMIE_LOG_CHANNEL_ID
+    is set) mirror it to that channel so the owner can see departures at a glance."""
+    print(line)
+    if not LOG_CHANNEL_ID:
+        return
+    try:
+        ch = await get_text_channel(int(LOG_CHANNEL_ID))
+        if ch is not None:
+            await ch.send(line, allowed_mentions=discord.AllowedMentions.none())
+    except Exception as e:
+        print(f"[guildlog] couldn't post to log channel: {type(e).__name__}: {e}")
+
+
 @bot.event
 async def on_guild_join(guild: discord.Guild):
+    await post_guild_log(
+        f"➕ **Joined** {guild.name} (`{guild.id}`) — now in **{len(bot.guilds)}** servers."
+    )
     g_state = get_guild_state(guild.id)
     sort_events(g_state)
     save_state()
@@ -1705,6 +1723,9 @@ async def on_guild_join(guild: discord.Guild):
 @bot.event
 async def on_guild_remove(guild: discord.Guild):
     """Called when the bot leaves a guild (kicked, left, or guild deleted)"""
+    await post_guild_log(
+        f"➖ **Left** {guild.name} (`{guild.id}`) — now in **{len(bot.guilds)}** servers."
+    )
     # Post updated server count to Top.gg
     bot_id = get_topgg_bot_id()
     if TOPGG_TOKEN and bot_id:
