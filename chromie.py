@@ -1161,6 +1161,13 @@ class ChromieBot(commands.Bot):
         except Exception as e:
             print(f"Error syncing commands (setup_hook): {e}")
 
+        # Register persistent views so their buttons keep working after a restart
+        # (the guided-setup message can sit in a channel indefinitely).
+        try:
+            self.add_view(GuidedSetupView())
+        except Exception as e:
+            print(f"Error registering persistent views (setup_hook): {e}")
+
         if not update_countdowns.is_running():
             update_countdowns.start()
         if not weekly_digest_loop.is_running():
@@ -1420,6 +1427,26 @@ async def get_bot_member(guild: discord.Guild) -> Optional[discord.Member]:
     except Exception:
         return None
 
+async def _first_sendable_channel(guild: discord.Guild) -> Optional[discord.TextChannel]:
+    """Best channel for a server-wide notice: the system channel if we can post
+    there, otherwise the first text channel where the bot can view + send."""
+    me = await get_bot_member(guild)
+
+    def _ok(ch) -> bool:
+        if not isinstance(ch, discord.TextChannel):
+            return False
+        target = me if me is not None else guild.default_role
+        p = ch.permissions_for(target)
+        return p.view_channel and p.send_messages
+
+    if guild.system_channel is not None and _ok(guild.system_channel):
+        return guild.system_channel
+    for ch in guild.text_channels:
+        if _ok(ch):
+            return ch
+    return None
+
+
 async def send_onboarding_for_guild(guild: discord.Guild):
     guild_state = get_guild_state(guild.id)
 
@@ -1515,17 +1542,7 @@ async def send_onboarding_for_guild(guild: discord.Guild):
 
     # Fallback: post in a channel (base message only to avoid "promo spam" vibe)
     if not sent_dm:
-        fallback_channel = guild.system_channel
-
-        if fallback_channel is None:
-            bot_m = await get_bot_member(guild)
-            for ch in guild.text_channels:
-                target = bot_m if bot_m is not None else guild.default_role
-                perms = ch.permissions_for(target)
-                if perms.view_channel and perms.send_messages:
-                    fallback_channel = ch
-                    break
-
+        fallback_channel = await _first_sendable_channel(guild)
         if fallback_channel is not None:
             try:
                 await fallback_channel.send(
@@ -1534,6 +1551,22 @@ async def send_onboarding_for_guild(guild: discord.Guild):
                 )
             except Exception:
                 pass
+
+    # Always post an in-channel guided-setup button so an admin can configure the
+    # countdown in a couple of clicks — visible even when the owner has DMs off.
+    setup_channel = await _first_sendable_channel(guild)
+    if setup_channel is not None:
+        try:
+            await setup_channel.send(
+                "👋 **Let's set up your countdown!**\n"
+                "Click **🚀 Get started** below and I'll walk you through it — pick a channel, "
+                "then add your first event. Takes about 20 seconds.\n"
+                "*(You'll need the **Manage Server** permission.)*",
+                view=GuidedSetupView(),
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+        except Exception:
+            pass
 
     guild_state["welcomed"] = True
     save_state()
@@ -1681,16 +1714,47 @@ async def on_ready():
 
 async def post_guild_log(line: str):
     """Print a join/leave line to the Render logs, and (if CHROMIE_LOG_CHANNEL_ID
-    is set) mirror it to that channel so the owner can see departures at a glance."""
+    is set) mirror it to that channel so the owner can see departures at a glance.
+
+    Each failure path logs a distinct, actionable reason so a missing mirror can
+    be diagnosed straight from the Render logs (most common cause: Chromie lacks
+    View Channel / Send Messages permission on a private log channel)."""
     print(line)
     if not LOG_CHANNEL_ID:
         return
+
     try:
-        ch = await get_text_channel(int(LOG_CHANNEL_ID))
-        if ch is not None:
-            await ch.send(line, allowed_mentions=discord.AllowedMentions.none())
-    except Exception as e:
-        print(f"[guildlog] couldn't post to log channel: {type(e).__name__}: {e}")
+        cid = int(LOG_CHANNEL_ID)
+    except (TypeError, ValueError):
+        print(f"[guildlog] CHROMIE_LOG_CHANNEL_ID is not a valid channel ID: {LOG_CHANNEL_ID!r}")
+        return
+
+    # Resolve the channel ourselves (instead of get_text_channel) so we can tell
+    # *why* it failed rather than collapsing every error into a silent None.
+    ch = bot.get_channel(cid)
+    if ch is None:
+        try:
+            ch = await bot.fetch_channel(cid)
+        except discord.Forbidden:
+            print(f"[guildlog] can't see log channel {cid} — Chromie lacks View Channel permission there.")
+            return
+        except discord.NotFound:
+            print(f"[guildlog] log channel {cid} doesn't exist — check CHROMIE_LOG_CHANNEL_ID.")
+            return
+        except discord.HTTPException as e:
+            print(f"[guildlog] couldn't fetch log channel {cid}: {type(e).__name__}: {e}")
+            return
+
+    if not isinstance(ch, (discord.TextChannel, discord.Thread)):
+        print(f"[guildlog] log channel {cid} isn't a text channel (it's {type(ch).__name__}) — check CHROMIE_LOG_CHANNEL_ID.")
+        return
+
+    try:
+        await ch.send(line, allowed_mentions=discord.AllowedMentions.none())
+    except discord.Forbidden:
+        print(f"[guildlog] can't post to log channel {cid} — Chromie lacks Send Messages permission there.")
+    except discord.HTTPException as e:
+        print(f"[guildlog] couldn't post to log channel {cid}: {type(e).__name__}: {e}")
 
 
 @bot.event
@@ -3785,6 +3849,282 @@ def format_events_list(guild_state: dict) -> str:
     return "\n".join(lines)
 
 
+def _pro_channel_gate_embed() -> discord.Embed:
+    """Upsell shown when a Free server tries to set up a 2nd+ countdown channel."""
+    return discord.Embed(
+        title="💎 Multiple countdown channels are a Chromie Pro feature",
+        description=(
+            "This server already has its free countdown channel. "
+            "With **Chromie Pro ($2.99/month)** you can run an independent "
+            "countdown in *every* channel — each with its own events, theme, "
+            "timezone and digest.\n\n"
+            "Subscribe via **Discord Server Subscription**, then run "
+            "`/seteventchannel` here again. Use `/pro_status` to check status."
+        ),
+        color=discord.Color.orange(),
+    )
+
+
+async def setup_countdown_channel(guild: discord.Guild, channel, actor):
+    """Claim `channel` as a countdown channel — the core of /seteventchannel,
+    reused by the slash command and the guided first-run setup flow.
+
+    Returns (proceed, content, embed):
+      • proceed -> True if the channel is now (or already was) a countdown channel
+      • content / embed -> what to show the actor (exactly one is non-None)
+    Idempotent: a channel that's already set up returns (True, "…already…", None)."""
+    if not isinstance(channel, discord.TextChannel):
+        return (False, "Please pick a **regular text channel** (not a thread/forum).", None)
+
+    guild_state = get_guild_state(guild.id)
+    channels = guild_state.setdefault("channels", {})
+
+    # Already a countdown channel? No-op (don't spam), but let callers proceed.
+    if str(channel.id) in channels:
+        return (True, "✅ This channel is already a countdown channel.", None)
+
+    # Gate: 1 countdown channel is free; additional channels need Chromie Pro.
+    if not can_add_countdown_channel(guild_state, channel.id):
+        return (False, None, _pro_channel_gate_embed())
+
+    # First countdown channel for this guild? Adopt any events the migration
+    # parked under the "unassigned" sentinel (events that existed before a
+    # channel was ever set) so nothing is lost.
+    if "unassigned" in channels:
+        channels[str(channel.id)] = channels.pop("unassigned")
+
+    cs = get_channel_state(guild.id, channel.id)
+    cs["pinned_message_id"] = None  # force a fresh pin for this channel
+
+    # audit fields (optional)
+    cs["event_channel_set_by"] = int(actor.id)
+    cs["event_channel_set_at"] = int(time.time())
+
+    sort_events(cs)
+    save_state()
+
+    # Permissions check. Split into perms that BLOCK the countdown (it can't post)
+    # vs perms that merely DEGRADE it (posts fine, just can't pin / auto-clean), so
+    # we don't cry wolf when the countdown actually works.
+    missing: list[str] = []
+    blocking: list[str] = []
+    degraded: list[str] = []
+    if hasattr(channel, "permissions_for"):
+        missing = missing_channel_perms(channel, guild)
+        blocking, degraded = classify_missing_perms(missing)
+        # Only DM the owner the "quick fix" guide when the countdown is actually
+        # broken — a missing pin perm doesn't warrant an owner DM.
+        if blocking:
+            await notify_owner_missing_perms(
+                guild,
+                channel,
+                missing=blocking,
+                action="post the countdown (it can't show until this is fixed)",
+            )
+
+    # 🔔 Notify owner + optionally post an audit note in the channel.
+    await notify_event_channel_changed(
+        guild,
+        actor=actor,
+        old_channel_id=None,
+        new_channel=channel,
+    )
+
+    # Build the pinned countdown immediately so the channel shows something.
+    await rebuild_pinned_message_for_channel(channel, cs, guild_state)
+
+    def _perm_names(codes):
+        return ", ".join(f"**{PERM_LABELS.get(p, p)}**" for p in codes)
+
+    if blocking:
+        extra = (
+            f"\n\n⚠️ I’m missing {_perm_names(blocking)} here, so the countdown can’t post yet. "
+            "I’ve messaged the server owner with a quick fix guide — grant those and it’ll appear."
+        )
+    elif degraded:
+        extra = (
+            f"\n\nℹ️ The countdown is posted. Heads-up: I’m missing {_perm_names(degraded)} here — "
+            "not required, but granting it lets me keep the countdown pinned and tidy."
+        )
+    else:
+        extra = ""
+
+    return (
+        True,
+        "✅ This channel is now a countdown channel.\nUse `/addevent` here to add events." + extra,
+        None,
+    )
+
+
+# ==========================
+# GUIDED FIRST-RUN SETUP (button flow)
+# ==========================
+# A persistent "🚀 Get started" button posted in the server when Chromie joins.
+# Click → pick a channel → fill a 3-field modal → the channel is claimed AND the
+# first event is created in one shot. Reuses setup_countdown_channel + add_event_core
+# so it enforces the exact same Pro / permission / event-limit rules as the slash
+# commands — no duplicated business logic.
+
+def _actor_can_manage(interaction: discord.Interaction) -> bool:
+    """True if the interacting user has Manage Server or Administrator."""
+    member = interaction.user
+    if not isinstance(member, discord.Member) and interaction.guild is not None:
+        member = interaction.guild.get_member(interaction.user.id) or member
+    perms = getattr(member, "guild_permissions", None)
+    return bool(perms and (perms.manage_guild or perms.administrator))
+
+
+class GuidedFirstEventModal(discord.ui.Modal):
+    """Step 2: collect the first event, then claim the channel AND add the event."""
+    def __init__(self, guild_id: int, channel_id: int):
+        super().__init__(title="Create your first event")
+        self.guild_id = guild_id
+        self.channel_id = channel_id
+        self.date = discord.ui.TextInput(label="Date (MM/DD/YYYY)", placeholder="04/12/2026", max_length=10)
+        self.time = discord.ui.TextInput(label="Time (24-hour HH:MM)", placeholder="09:00", max_length=5)
+        self.name = discord.ui.TextInput(label="Event name", placeholder="Game Night 🎲", max_length=200)
+        self.add_item(self.date)
+        self.add_item(self.time)
+        self.add_item(self.name)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        # Modal submit is a fresh interaction, so we CAN defer and do slow work here.
+        await interaction.response.defer(ephemeral=True)
+        guild = bot.get_guild(self.guild_id)
+        channel = guild.get_channel(self.channel_id) if guild else None
+        if guild is None or not isinstance(channel, discord.TextChannel):
+            await interaction.edit_original_response(
+                content="I couldn't find that channel anymore. Try `/seteventchannel` in the channel you want."
+            )
+            return
+
+        # 1) Claim the channel (idempotent — no-op if it's already a countdown channel).
+        proceed, content, embed = await setup_countdown_channel(guild, channel, interaction.user)
+        if not proceed:
+            if embed is not None:
+                await interaction.edit_original_response(content=content, embed=embed)
+            else:
+                await interaction.edit_original_response(content=content)
+            return
+
+        # 2) Add the first event with the same limits the slash command enforces.
+        g = get_guild_state(self.guild_id)
+        cs = get_channel_state(self.guild_id, self.channel_id)
+        member = guild.get_member(interaction.user.id)
+        msg, _nudge = await add_event_core(
+            guild, g, cs, self.channel_id,
+            actor=interaction.user, member=member,
+            date=str(self.date.value).strip(),
+            time=str(self.time.value).strip(),
+            name=str(self.name.value).strip(),
+        )
+
+        if msg.startswith("✅ Added event"):
+            await interaction.edit_original_response(
+                content=(
+                    f"🎉 **You're all set!** {channel.mention} is now your countdown channel.\n\n"
+                    f"{msg}\n\n"
+                    "**What's next?**\n"
+                    "• `/addevent` — add more events\n"
+                    "• `/event` — edit, delete, milestones & reminders\n"
+                    "• `/countdown` — themes, timezone, time format\n"
+                    "• `/healthcheck` — confirm my permissions"
+                )
+            )
+        else:
+            # Channel is set up, but the event itself couldn't be added (bad/past
+            # date, or tier limit). Surface that message as-is so they can retry.
+            await interaction.edit_original_response(
+                content=(
+                    f"✅ {channel.mention} is now your countdown channel — but I couldn't add that event:\n\n"
+                    f"{msg}\n\n"
+                    "Fix the above, then run `/addevent` in that channel."
+                )
+            )
+
+
+class GuidedChannelSelect(discord.ui.ChannelSelect):
+    """Step 1: pick the text channel that becomes the countdown channel."""
+    def __init__(self):
+        super().__init__(
+            placeholder="Choose the channel for your countdown…",
+            channel_types=[discord.ChannelType.text],
+            min_values=1,
+            max_values=1,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if not _actor_can_manage(interaction):
+            await interaction.response.send_message(
+                "You need **Manage Server** (or **Administrator**) to set this up.", ephemeral=True
+            )
+            return
+
+        guild = interaction.guild
+        chosen = self.values[0]
+        channel = guild.get_channel(chosen.id) if guild else None
+        if not isinstance(channel, discord.TextChannel):
+            await interaction.response.send_message(
+                "Please pick a **regular text channel** (not a thread/forum/voice).", ephemeral=True
+            )
+            return
+
+        # Pro gate up front, so we don't collect event details and then reject.
+        guild_state = get_guild_state(guild.id)
+        already = str(channel.id) in guild_state.get("channels", {})
+        if not already and not can_add_countdown_channel(guild_state, channel.id):
+            await interaction.response.send_message(embed=_pro_channel_gate_embed(), ephemeral=True)
+            return
+
+        # send_modal MUST be the first response (you can't defer first), so open it
+        # now; the heavy setup work runs in the modal's on_submit (a fresh interaction).
+        await interaction.response.send_modal(GuidedFirstEventModal(guild.id, channel.id))
+
+
+class GuidedChannelSelectView(discord.ui.View):
+    """Ephemeral, short-lived — created fresh on each click, so no persistence needed."""
+    def __init__(self):
+        super().__init__(timeout=300)
+        self.add_item(GuidedChannelSelect())
+
+
+class GuidedStartButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(
+            label="Get started",
+            emoji="🚀",
+            style=discord.ButtonStyle.success,
+            custom_id="chromie:guided_setup:start",
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.guild is None:
+            await interaction.response.send_message("Run this inside a server, not in DMs.", ephemeral=True)
+            return
+        if not _actor_can_manage(interaction):
+            await interaction.response.send_message(
+                "Only someone with **Manage Server** (or **Administrator**) can set up the countdown.\n"
+                "Ask a server admin to click **🚀 Get started**.",
+                ephemeral=True,
+            )
+            return
+        await interaction.response.send_message(
+            "**Step 1 of 2 — pick a channel**\n"
+            "Choose the channel where you want your countdown pinned. I'll set it up, "
+            "then ask for your first event.",
+            view=GuidedChannelSelectView(),
+            ephemeral=True,
+        )
+
+
+class GuidedSetupView(discord.ui.View):
+    """Persistent (timeout=None) so the button keeps working after a restart.
+    Stateless — registered once via bot.add_view in setup_hook."""
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(GuidedStartButton())
+
+
 @bot.tree.command(name="seteventchannel", description="Turn this channel into a countdown channel.")
 @app_commands.default_permissions(manage_guild=True)  # ✅ hides command from non-manage-server users
 @app_commands.checks.has_permissions(manage_guild=True)  # ✅ runtime enforcement
@@ -3814,99 +4154,11 @@ async def seteventchannel(interaction: discord.Interaction):
         )
         return
 
-    guild_state = get_guild_state(guild.id)
-    new_channel = interaction.channel
-    channels = guild_state.setdefault("channels", {})
-
-    # If this channel is already a countdown channel, no-op (don't spam).
-    if str(new_channel.id) in channels:
-        await interaction.edit_original_response(
-            content="✅ This channel is already a countdown channel."
-        )
-        return
-
-    # Gate: 1 countdown channel is free; additional channels need Chromie Pro.
-    if not can_add_countdown_channel(guild_state, new_channel.id):
-        embed = discord.Embed(
-            title="💎 Multiple countdown channels are a Chromie Pro feature",
-            description=(
-                "This server already has its free countdown channel. "
-                "With **Chromie Pro ($2.99/month)** you can run an independent "
-                "countdown in *every* channel — each with its own events, theme, "
-                "timezone and digest.\n\n"
-                "Subscribe via **Discord Server Subscription**, then run "
-                "`/seteventchannel` here again. Use `/pro_status` to check status."
-            ),
-            color=discord.Color.orange(),
-        )
-        await interaction.edit_original_response(content=None, embed=embed)
-        return
-
-    # First countdown channel for this guild? Adopt any events the migration
-    # parked under the "unassigned" sentinel (events that existed before a
-    # channel was ever set) so nothing is lost.
-    if "unassigned" in channels:
-        channels[str(new_channel.id)] = channels.pop("unassigned")
-
-    cs = get_channel_state(guild.id, new_channel.id)
-    cs["pinned_message_id"] = None  # force a fresh pin for this channel
-
-    # audit fields (optional)
-    cs["event_channel_set_by"] = int(interaction.user.id)
-    cs["event_channel_set_at"] = int(time.time())
-
-    sort_events(cs)
-    save_state()
-
-    # Permissions check. Split into perms that BLOCK the countdown (it can't post)
-    # vs perms that merely DEGRADE it (posts fine, just can't pin / auto-clean), so
-    # we don't cry wolf when the countdown actually works.
-    missing: list[str] = []
-    blocking: list[str] = []
-    degraded: list[str] = []
-    if hasattr(new_channel, "permissions_for"):
-        missing = missing_channel_perms(new_channel, guild)
-        blocking, degraded = classify_missing_perms(missing)
-        # Only DM the owner the "quick fix" guide when the countdown is actually
-        # broken — a missing pin perm doesn't warrant an owner DM.
-        if blocking:
-            await notify_owner_missing_perms(
-                guild,
-                new_channel,
-                missing=blocking,
-                action="post the countdown (it can't show until this is fixed)",
-            )
-
-    # 🔔 Notify owner + optionally post an audit note in the channel.
-    await notify_event_channel_changed(
-        guild,
-        actor=interaction.user,
-        old_channel_id=None,
-        new_channel=new_channel,
-    )
-
-    # Build the pinned countdown immediately so the channel shows something.
-    await rebuild_pinned_message_for_channel(new_channel, cs, guild_state)
-
-    def _perm_names(codes):
-        return ", ".join(f"**{PERM_LABELS.get(p, p)}**" for p in codes)
-
-    if blocking:
-        extra = (
-            f"\n\n⚠️ I’m missing {_perm_names(blocking)} here, so the countdown can’t post yet. "
-            "I’ve messaged the server owner with a quick fix guide — grant those and it’ll appear."
-        )
-    elif degraded:
-        extra = (
-            f"\n\nℹ️ The countdown is posted. Heads-up: I’m missing {_perm_names(degraded)} here — "
-            "not required, but granting it lets me keep the countdown pinned and tidy."
-        )
+    proceed, content, embed = await setup_countdown_channel(guild, interaction.channel, interaction.user)
+    if embed is not None:
+        await interaction.edit_original_response(content=content, embed=embed)
     else:
-        extra = ""
-
-    await interaction.edit_original_response(
-        content="✅ This channel is now a countdown channel.\nUse `/addevent` here to add events." + extra
-    )
+        await interaction.edit_original_response(content=content)
 
 @bot.tree.command(name="linkserver", description="Link yourself to this server for DM control.")
 @app_commands.checks.has_permissions(manage_guild=True)
@@ -4052,10 +4304,15 @@ def _countdown_hub_embed_with_note(guild_id: int, channel_id: int, note: str) ->
 
 
 async def _countdown_apply(interaction: discord.Interaction, guild_id: int, channel_id: int, *, confirm: str):
-    """Component path: refresh pin + re-render the hub in place (edit_message)."""
-    await _countdown_refresh_pin(guild_id, channel_id)
+    """Component path: re-render the hub in place (edit_message), then refresh the pin.
+
+    Acknowledge FIRST so the initial interaction response lands inside Discord's ~3s
+    window; the network-bound pin refresh runs after (it edits a different message and
+    doesn't need the interaction token). Refreshing before risked 404 'Unknown
+    interaction'. See _event_apply for the same fix."""
     embed = _countdown_hub_embed_with_note(guild_id, channel_id, confirm)
     await interaction.response.edit_message(embed=embed, view=CountdownHubView(guild_id, channel_id))
+    await _countdown_refresh_pin(guild_id, channel_id)
 
 
 async def _countdown_apply_via_parent(parent: discord.Interaction, guild_id: int, channel_id: int, *, confirm: str):
@@ -4153,9 +4410,10 @@ class CountdownThemeApplyButton(discord.ui.Button):
         cs = get_channel_state(gid, cid)
         cs["theme"] = tid
         save_state()
-        await _countdown_refresh_pin(gid, cid)
+        # Acknowledge before the network-bound pin refresh (3s window — see _event_apply).
         embed = _countdown_hub_embed_with_note(gid, cid, f"✅ Theme set to **{label}**.")
         await interaction.response.edit_message(content=None, embed=embed, view=CountdownHubView(gid, cid))
+        await _countdown_refresh_pin(gid, cid)
 
 
 class CountdownThemePreviewBackButton(discord.ui.Button):
@@ -4732,13 +4990,19 @@ def build_event_detail_embed(cs: dict, guild_state: dict, ev: dict) -> discord.E
 
 
 async def _event_apply(interaction: discord.Interaction, gid: int, cid: int, ev: dict, *, confirm: str):
-    """Component path: refresh the pin + re-render the event detail in place."""
-    await _countdown_refresh_pin(gid, cid)
+    """Component path: re-render the event detail in place, then refresh the pin.
+
+    Order matters: edit_message is the *initial* interaction response and must land
+    within Discord's ~3s window, so we acknowledge FIRST (the embed is built from
+    already-saved state, so it's instant) and only then do the slow pin refresh —
+    which edits a different message and doesn't need the interaction token.
+    Doing the network-bound pin refresh first risked a 404 'Unknown interaction'."""
     g = get_guild_state(gid)
     cs = get_channel_state(gid, cid)
     embed = build_event_detail_embed(cs, g, ev)
     embed.description = confirm
     await interaction.response.edit_message(embed=embed, view=EventDetailView(gid, cid, ev))
+    await _countdown_refresh_pin(gid, cid)
 
 
 async def _event_apply_via_parent(parent: discord.Interaction, gid: int, cid: int, ev: dict, *, confirm: str):
@@ -4831,6 +5095,10 @@ class EventAddModal(discord.ui.Modal):
         self.add_item(self.name)
 
     async def on_submit(self, interaction: discord.Interaction):
+        # Ack first: add_event_core makes a Top.gg API call (force=True) + rebuilds the
+        # pin, which can exceed Discord's ~3s initial-response window. Defer, then fill
+        # in the deferred ephemeral via edit_original_response (webhook, 15-min window).
+        await interaction.response.defer(ephemeral=True)
         g = get_guild_state(self.gid)
         cs = get_channel_state(self.gid, self.cid)
         guild = bot.get_guild(self.gid)
@@ -4841,7 +5109,7 @@ class EventAddModal(discord.ui.Modal):
             date=str(self.date.value).strip(), time=str(self.time.value).strip(),
             name=str(self.name.value).strip(),
         )
-        await interaction.response.send_message(msg, ephemeral=True)
+        await interaction.edit_original_response(content=msg)
         try:
             await self.parent.edit_original_response(
                 embed=build_event_hub_embed(cs, g), view=EventHubView(self.gid, self.cid)
@@ -5217,12 +5485,13 @@ class EventDupeModal(discord.ui.Modal):
         cs["events"].append(new_ev)
         sort_events(cs)
         save_state()
-        await _countdown_refresh_pin(self.gid, self.cid)
+        # Acknowledge before the network-bound pin refresh (3s window — see _event_apply).
         await interaction.response.send_message(f"🧬 Duplicated → **{use_name}** on {dt.strftime('%B %d, %Y at %I:%M %p %Z')}.", ephemeral=True)
         try:
             await self.parent.edit_original_response(embed=build_event_hub_embed(cs, g), view=EventHubView(self.gid, self.cid))
         except Exception:
             pass
+        await _countdown_refresh_pin(self.gid, self.cid)
 
 
 class EventDeleteConfirmButton(discord.ui.Button):
@@ -5238,10 +5507,11 @@ class EventDeleteConfirmButton(discord.ui.Button):
         except ValueError:
             pass
         save_state()
-        await _countdown_refresh_pin(v.guild_id, v.channel_id)
+        # Acknowledge before the network-bound pin refresh (3s window — see _event_apply).
         await interaction.response.edit_message(
             embed=build_event_hub_embed(cs, g), view=EventHubView(v.guild_id, v.channel_id)
         )
+        await _countdown_refresh_pin(v.guild_id, v.channel_id)
 
 
 class EventDeleteView(discord.ui.View):
@@ -5840,14 +6110,14 @@ async def template_load_cmd(interaction: discord.Interaction, name: str, date: s
     cs["events"].append(new_ev)
     sort_events(cs)
     save_state()
-    ch = await get_text_channel(cid)
-    if ch:
-        await rebuild_pinned_message_for_channel(ch, cs, g)
-
+    # Acknowledge before the network-bound pin rebuild (3s window — see _event_apply).
     await interaction.response.send_message(
         f"✅ Created **{event_name}** from template **{tpl.get('display_name', name)}**.",
         ephemeral=True,
     )
+    ch = await get_text_channel(cid)
+    if ch:
+        await rebuild_pinned_message_for_channel(ch, cs, g)
 def _clean_url(u: str) -> str:
     u = (u or "").strip()
     # allow people to paste <https://...>
@@ -6294,6 +6564,9 @@ async def owner_unlock_command(
         return
     
     save_state()
+    # Acknowledge before refreshing every channel's pin — that loop is many network
+    # calls and would otherwise blow Discord's ~3s window (see _event_apply).
+    await interaction.response.send_message(msg, ephemeral=True)
     for cid, cs in iter_channel_states(guild_state):
         ch = await get_text_channel(cid)
         if ch:
@@ -6301,8 +6574,6 @@ async def owner_unlock_command(
                 await refresh_countdown_message_for_channel(interaction.guild, ch, cs, guild_state)
             except Exception:
                 pass
-
-    await interaction.response.send_message(msg, ephemeral=True)
 
 
 # ==========================
