@@ -1122,8 +1122,10 @@ class ChromieBot(commands.Bot):
                 print(f"Slash commands synced to TEST guild {test_guild_id} "
                       f"({len(synced)} cmds; global tree untouched). [{VERSION}]")
             else:
-                await self.tree.sync()
-                print(f"Slash commands synced (global, setup_hook). [{VERSION}]")
+                synced = await self.tree.sync()
+                names = sorted(c.name for c in synced)
+                print(f"Slash commands synced (global, setup_hook): {len(names)} cmds "
+                      f"{names}. [{VERSION}]")
         except Exception as e:
             print(f"Error syncing commands (setup_hook): {e}")
 
