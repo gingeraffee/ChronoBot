@@ -6217,20 +6217,10 @@ async def owner_unlock_command(
     duration_hours: int = 12
 ):
     """Owner-only temporary unlock."""
-    if interaction.user.id != bot.application_info_cached.owner.id if hasattr(bot, 'application_info_cached') else None:
-        # Try to get owner ID
-        if not hasattr(bot, 'application_info_cached'):
-            try:
-                app_info = await bot.application_info()
-                bot.application_info_cached = app_info
-            except:
-                await interaction.response.send_message("❌ Owner only", ephemeral=True)
-                return
-        
-        if interaction.user.id != bot.application_info_cached.owner.id:
-            await interaction.response.send_message("❌ Owner only", ephemeral=True)
-            return
-    
+    if not await _is_bot_owner(interaction):
+        await interaction.response.send_message("❌ Owner only", ephemeral=True)
+        return
+
     guild_state = get_guild_state(interaction.guild_id)
     now = datetime.now(timezone.utc)
     until = now + timedelta(hours=duration_hours)
@@ -6319,9 +6309,10 @@ def _build_launch_announcement_view():
 
 async def _is_bot_owner(interaction: discord.Interaction) -> bool:
     try:
-        if not getattr(bot, "application_info_cached", None):
-            bot.application_info_cached = await bot.application_info()
-        return interaction.user.id == bot.application_info_cached.owner.id
+        # bot.is_owner() handles BOTH single-owner and team-owned applications
+        # (and respects owner_ids). The old manual `app_info.owner.id` check
+        # returned False for team-owned bots, where owner can be None/a team.
+        return await bot.is_owner(interaction.user)
     except Exception:
         return False
 
