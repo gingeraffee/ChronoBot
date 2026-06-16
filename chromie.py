@@ -6195,21 +6195,9 @@ async def sync_subscription(interaction: discord.Interaction):
         await interaction.edit_original_response(embed=embed)
 
 
-# ==========================
-# RUN
-# ==========================
-
-def main():
-    if not TOKEN:
-        raise RuntimeError(
-            "No bot token found. Set the DISCORD_BOT_TOKEN environment variable "
-            "or edit the TOKEN section near the top of the file."
-        )
-    bot.run(TOKEN)
-
-
-if __name__ == "__main__":
-    main()
+# Bot startup (def main + the __main__ guard) lives at the very END of this file,
+# AFTER every @bot.tree.command — because bot.run() blocks the event loop, so any
+# command defined below it would never register. Do not add code after the run block.
 
 # ==========================
 
@@ -6399,3 +6387,22 @@ async def announce_update(interaction: discord.Interaction, confirm: bool = Fals
             f"⚠️ Failed (no access / channel gone): **{result['failed']}**"
         )
     await interaction.followup.send(msg, ephemeral=True)
+
+
+# ==========================
+# RUN — MUST stay last. bot.run() blocks the event loop, so EVERY @bot.tree.command
+# must be defined above this point or it will never register (this is exactly why
+# /owner_unlock and /announce_update were missing in production).
+# ==========================
+
+def main():
+    if not TOKEN:
+        raise RuntimeError(
+            "No bot token found. Set the DISCORD_BOT_TOKEN environment variable "
+            "or edit the TOKEN section near the top of the file."
+        )
+    bot.run(TOKEN)
+
+
+if __name__ == "__main__":
+    main()
