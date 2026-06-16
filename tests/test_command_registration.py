@@ -48,6 +48,17 @@ def test_expected_commands_are_in_the_tree():
         assert required in names, f"command '{required}' is missing from the tree"
 
 
+def test_owner_only_command_set_references_real_commands():
+    # OWNER_ONLY_COMMANDS are relocated to the dev guild at runtime; guard against
+    # typos / renamed commands that would silently leave them registered globally.
+    os.environ.setdefault("CHROMIE_DATA_PATH", os.path.join(tempfile.gettempdir(), "chromie_cmdreg.json"))
+    import chromie
+    names = {c.name for c in chromie.bot.tree.get_commands()}
+    assert chromie.OWNER_ONLY_COMMANDS, "OWNER_ONLY_COMMANDS should not be empty"
+    for name in chromie.OWNER_ONLY_COMMANDS:
+        assert name in names, f"OWNER_ONLY_COMMANDS lists '{name}', which is not a registered command"
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

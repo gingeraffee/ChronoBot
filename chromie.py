@@ -1107,6 +1107,12 @@ async def sync_discord_subscription(guild_id: int) -> bool:
     return False
 
 
+# Owner-only commands are hidden from the 600+ public servers by registering them
+# ONLY in the dev guild (DEV_GUILD_ID). They're defined globally at import (so
+# they're easy to find), then relocated to the dev guild in setup_hook below.
+OWNER_ONLY_COMMANDS = {"announce_update", "prune_state", "owner_unlock"}
+
+
 class ChromieBot(commands.Bot):
     async def setup_hook(self):
         try:
@@ -1122,10 +1128,35 @@ class ChromieBot(commands.Bot):
                 print(f"Slash commands synced to TEST guild {test_guild_id} "
                       f"({len(synced)} cmds; global tree untouched). [{VERSION}]")
             else:
+                # Relocate owner-only commands to the dev guild so they never
+                # appear in the public servers (Discord has no "bot owner" perm
+                # to hide on). They're defined globally at import, moved here.
+                dev_guild_id = os.getenv("DEV_GUILD_ID", "").strip()
+                dev_guild, moved = None, []
+                if dev_guild_id:
+                    try:
+                        dev_guild = discord.Object(id=int(dev_guild_id))
+                        for name in OWNER_ONLY_COMMANDS:
+                            cmd = self.tree.remove_command(name)
+                            if cmd is not None:
+                                self.tree.add_command(cmd, guild=dev_guild)
+                                moved.append(name)
+                    except Exception as e:
+                        print(f"Error relocating owner commands to dev guild: {e}")
+
+                # Global sync (owner-only commands now excluded from public servers).
                 synced = await self.tree.sync()
                 names = sorted(c.name for c in synced)
                 print(f"Slash commands synced (global, setup_hook): {len(names)} cmds "
                       f"{names}. [{VERSION}]")
+
+                # Dev-guild sync for the owner-only commands (best effort).
+                if dev_guild is not None and moved:
+                    try:
+                        await self.tree.sync(guild=dev_guild)
+                        print(f"Owner-only commands synced to dev guild {dev_guild_id}: {sorted(moved)}")
+                    except Exception as e:
+                        print(f"Error syncing owner commands to dev guild: {e}")
         except Exception as e:
             print(f"Error syncing commands (setup_hook): {e}")
 
