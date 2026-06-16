@@ -6381,6 +6381,96 @@ async def announce_update(interaction: discord.Interaction, confirm: bool = Fals
 
 
 # ==========================
+# STATE PRUNE (owner-only) — drop saved data for servers Chromie has left
+# ==========================
+
+def _departed_guild_ids(data: dict, current_ids: set) -> list:
+    """Guild-state keys whose guild the bot is no longer in (or whose key is
+    malformed). `current_ids` is a set of int guild ids the bot is currently in."""
+    out = []
+    for gid in data.get("guilds", {}):
+        try:
+            if int(gid) not in current_ids:
+                out.append(gid)
+        except (TypeError, ValueError):
+            out.append(gid)  # unparseable key -> prune it
+    return out
+
+
+def _prune_departed(data: dict, current_ids: set) -> dict:
+    """Remove departed guilds + any user_links pointing at them. Mutates `data`."""
+    guilds = data.get("guilds", {})
+    departed = _departed_guild_ids(data, current_ids)
+    for gid in departed:
+        guilds.pop(gid, None)
+
+    links = data.get("user_links", {})
+    remaining = set(guilds)
+    removed_links = [uid for uid, g in list(links.items()) if str(g) not in remaining]
+    for uid in removed_links:
+        links.pop(uid, None)
+
+    return {"removed_guilds": len(departed), "kept_guilds": len(guilds),
+            "removed_links": len(removed_links)}
+
+
+@bot.tree.command(name="prune_state", description="[Owner] Remove saved data for servers Chromie has left.")
+@app_commands.describe(confirm="Leave unchecked for a dry run. Set True to prune (a backup is written first).")
+async def prune_state(interaction: discord.Interaction, confirm: bool = False):
+    if not await _is_bot_owner(interaction):
+        await interaction.response.send_message("❌ Owner only.", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True, thinking=True)
+
+    current = {g.id for g in bot.guilds}
+    total = len(state.get("guilds", {}))
+
+    # SAFETY GUARD: if the gateway/cache isn't ready we might see 0 servers —
+    # pruning then would wipe everything. Refuse and make no changes.
+    if not current:
+        await interaction.followup.send(
+            "⚠️ **Aborted** — I currently see **0** servers (gateway/cache not ready?). "
+            "No changes made. Try again in a moment.", ephemeral=True)
+        return
+
+    departed = _departed_guild_ids(state, current)
+
+    if not confirm:
+        await interaction.followup.send(
+            f"🧪 **Dry run — nothing changed.**\n"
+            f"• Chromie is in **{len(current)}** servers right now.\n"
+            f"• State holds **{total}** guild entries.\n"
+            f"• Would remove **{len(departed)}** departed entries "
+            f"(keeping **{total - len(departed)}**).\n\n"
+            f"Re-run with **confirm: True** to prune — a timestamped backup is written first.",
+            ephemeral=True)
+        return
+
+    # Back up the current state BEFORE removing anything.
+    ts = datetime.now(DEFAULT_TZ).strftime("%Y%m%d-%H%M%S")
+    backup_path = DATA_FILE.with_suffix(DATA_FILE.suffix + f".bak.prune.{ts}")
+    try:
+        with open(backup_path, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        await interaction.followup.send(
+            f"⚠️ **Aborted** — couldn't write the backup ({type(e).__name__}: {e}). No changes made.",
+            ephemeral=True)
+        return
+
+    result = _prune_departed(state, current)
+    save_state()
+    await interaction.followup.send(
+        f"🧹 **Pruned!**\n"
+        f"• Removed **{result['removed_guilds']}** departed servers "
+        f"(+ **{result['removed_links']}** stale user links).\n"
+        f"• Kept **{result['kept_guilds']}** active servers.\n"
+        f"• Backup saved: `{backup_path.name}` (on the Render disk).",
+        ephemeral=True)
+
+
+# ==========================
 # RUN — MUST stay last. bot.run() blocks the event loop, so EVERY @bot.tree.command
 # must be defined above this point or it will never register (this is exactly why
 # /owner_unlock and /announce_update were missing in production).
