@@ -49,6 +49,8 @@ _STATE_LOCK = Lock()
 
 TOPGG_TOKEN = os.getenv("TOPGG_TOKEN", "").strip()
 TOPGG_BOT_ID = os.getenv("TOPGG_BOT_ID", "").strip()
+PRO_SKU_ID = os.getenv("CHROMIE_PRO_SKU_ID", "").strip()       # Discord SKU for Chromie Pro (same one entitlements check)
+PRO_STORE_URL = os.getenv("CHROMIE_PRO_STORE_URL", "").strip()  # optional plain-link fallback for the subscribe button
 TOPGG_FAIL_OPEN = False 
 _topgg_mismatch_warned = False
     
@@ -319,16 +321,71 @@ def get_pro_status_text(guild_state: Dict[str, Any]) -> str:
     return "🔒 Pro Locked"
 
 
+def build_pro_subscribe_view() -> Optional[discord.ui.View]:
+    """A one-button view to subscribe to Chromie Pro, shown on every Pro gate.
+
+    Prefers Discord's native premium/subscribe button — clicking it opens the
+    in-client purchase flow for the Pro SKU (the same SKU entitlements are checked
+    against), which is the correct mechanism for server subscriptions. Falls back to
+    a plain link button if CHROMIE_PRO_STORE_URL is set, else None (callers still show
+    the text explanation). Built defensively so an older discord.py without premium
+    buttons degrades to today's text-only gate instead of erroring."""
+    if PRO_SKU_ID:
+        try:
+            view = discord.ui.View(timeout=None)
+            view.add_item(discord.ui.Button(style=discord.ButtonStyle.premium, sku_id=int(PRO_SKU_ID)))
+            return view
+        except Exception:
+            pass  # discord.py too old for premium buttons, or bad SKU — fall through
+    if PRO_STORE_URL:
+        view = discord.ui.View(timeout=None)
+        view.add_item(discord.ui.Button(style=discord.ButtonStyle.link, url=PRO_STORE_URL,
+                                        label="💎 Subscribe to Chromie Pro"))
+        return view
+    return None
+
+
+async def send_pro_gate(interaction: discord.Interaction, *, content: Optional[str] = None,
+                        embed: Optional[discord.Embed] = None):
+    """Respond to a Pro-locked action with the explanation PLUS a clickable subscribe
+    button (when the Pro SKU/URL is configured). Use for every 'this needs Pro' gate so
+    the upsell is consistent and actionable. Honors an already-acknowledged interaction."""
+    view = build_pro_subscribe_view()
+    base: Dict[str, Any] = {"ephemeral": True}
+    if content is not None:
+        base["content"] = content
+    if embed is not None:
+        base["embed"] = embed
+
+    async def _send(extra: Dict[str, Any]):
+        kwargs = {**base, **extra}
+        if interaction.response.is_done():
+            await interaction.followup.send(**kwargs)
+        else:
+            await interaction.response.send_message(**kwargs)
+
+    try:
+        await _send({"view": view} if view is not None else {})
+    except Exception:
+        # If the subscribe button is what failed (unpublished/invalid SKU, or an
+        # older discord.py), still deliver the explanation without it — never leave
+        # the user with no response at all.
+        try:
+            await _send({})
+        except Exception:
+            pass
+
+
 def require_pro(feature_name: str):
     """Decorator to require Pro subscription for a command."""
     async def predicate(interaction: discord.Interaction) -> bool:
         if not interaction.guild_id:
             return True  # Allow in DMs if they have linked server
-        
+
         guild_state = get_guild_state(interaction.guild_id)
         if is_pro(guild_state):
             return True
-        
+
         # Send Pro required message
         embed = discord.Embed(
             title="❌ Chromie Pro Required",
@@ -349,17 +406,10 @@ def require_pro(feature_name: str):
             ),
             inline=False
         )
-        
-        try:
-            if interaction.response.is_done():
-                await interaction.followup.send(embed=embed, ephemeral=True)
-            else:
-                await interaction.response.send_message(embed=embed, ephemeral=True)
-        except:
-            pass
-        
+
+        await send_pro_gate(interaction, embed=embed)
         return False
-    
+
     return app_commands.check(predicate)
 
     
@@ -1461,70 +1511,26 @@ async def send_onboarding_for_guild(guild: discord.Guild):
             contact_user = None
 
     mention = contact_user.mention if contact_user else ""
-    milestone_str = ", ".join(str(x) for x in DEFAULT_MILESTONES)
-
     # -----------------------------
-    # Message 1: Base features
+    # Welcome DM — one premium-spaced message using Discord ## headers + -# subtext.
+    # (Full tier/Pro breakdown lives in /chronohelp, so we don't wall-of-text the DM.)
     # -----------------------------
     base_message = (
-        f"Hey {mention}! Thanks for inviting **ChronoBot** to **{guild.name}** 🕒✨\n"
-        "I'm **Chromie** — your server's confident little timekeeper. I pin a clean countdown list and post reminders "
-        "so nobody has to do the mental math (or the panic).\n\n"
-        "**⚡ Quick start (30 seconds):**\n"
-        "1) In the channel you want the countdown: `/seteventchannel`\n"
-        "2) Add an event: `/addevent date: 04/12/2026 time: 09:00 name: Game Night 🎲`\n"
-        "3) Fine-tune anytime with the hubs below.\n\n"
-        "**🧭 Core commands:**\n"
-        "• `/listevents` • `/nextevent` • `/remindall`\n"
-        "• `/event` — manage events (edit, delete, milestones, owner, repeat, banner, silence)\n"
-        "• `/countdown` — channel settings (theme, timezone, time format, mention role, digest)\n\n"
-        "**🔔 Reminders & mentions:**\n"
-        f"Milestone reminders post in your countdown channel ({milestone_str} by default). "
-        "Each channel has its own timezone (set it in `/countdown`).\n"
-        "Role pings, owner assignment, and per-event owner DMs all live in `/event` and `/countdown`.\n\n"
-        "**🎨 Make it yours:**\n"
-        "Pick from **19 themes** — sports, cute, spooky, birthday, wedding, game launch & more — and "
-        "**preview before you apply** in `/countdown` → Theme.\n"
-        "Your **first countdown channel is free**; Chromie Pro unlocks a separate countdown in *every* channel.\n\n"
-        "**🛠️ Troubleshooting:**\n"
-        "Run `/healthcheck` — it shows each countdown channel + whether I can view/send/embed/read history/pin.\n"
-        "(Past events auto-remove after they pass so the list stays tidy.)\n\n"
-        "**More help:** `/chronohelp` (check out Tiers & Pricing!)\n\n"
-        f"FAQ: {FAQ_URL}\n"
-        f"Support server: {SUPPORT_SERVER_URL}\n\n"
-        "Alright — I'll be over here, politely bullying time into behaving. 💜"
-    )
-
-    # -----------------------------
-    # Message 2: Tiers & Supporter features
-    # -----------------------------
-    supporter_message = (
-        "**🎯 Your tier: Free (1 event max)**\n"
-        "• 🆓 **Free:** 1 event, 1 countdown channel, all core features\n"
-        "• ⭐ **Supporter:** 3 events, premium themes, banners (vote on Top.gg - free!)\n"
-        "• 💎 **Pro:** Unlimited events, countdowns in every channel, build-your-own themes & more ($2.99/mo)\n"
-        "Run `/vote` to unlock Supporter, or subscribe for Pro via our Store!\n\n"
-        "**⭐ Supporter Tier (Vote to unlock - Free!)**\n"
-        "Chromie is free. Voting on Top.gg helps it grow — and unlocks bonus features for 12 hours.\n\n"
-        "**What you get:**\n"
-        "• 3 events (vs 1 for Free)\n"
-        "• 19 premium themes incl. seasonal drops — preview before you apply (`/countdown` → Theme)\n"
-        "• Custom event banners (`/event` → Banner)\n\n"
-        "**How to unlock:**\n"
-        "Run `/vote` to get the link. Voting takes 10 seconds and helps Chromie grow!\n\n"
-        "**💎 Chromie Pro ($2.99/month)**\n"
-        "For power users who need unlimited events + advanced automation:\n"
-        "• ♾️ Unlimited events (no cap)\n"
-        "• 📌 A separate countdown in *every* channel (each its own events/theme/timezone)\n"
-        "• 🎨 Build-your-own custom themes — your colors, emoji, title & footer (`/countdown` → Build-your-own)\n"
-        "• 🔁 Recurring event reminders (`/event` → Repeat)\n"
-        "• 📋 Event templates (`/template save`, `/template load`)\n"
-        "• 📑 Duplicate events (`/event` → Duplicate)\n"
-        "• 📊 Weekly digest summaries (`/countdown` → Weekly digest)\n"
-        "• 🎨 All Supporter features (permanent)\n"
-        "• 🏆 Priority support\n\n"
-        "Subscribe via my Discord Store. Pro unlocks for your entire server!\n\n"
-        "If anything seems stuck after voting, run `/vote` again (Top.gg can take a moment to reflect your vote)."
+        f"Hey {mention} — thanks for adding me to **{guild.name}**! 🕒✨\n"
+        "I pin a tidy countdown and nudge everyone before the big moment, so nobody's stuck doing panic-math.\n\n"
+        "## 🚀 Set up in 20 seconds\n"
+        "Click **Get started** on my setup message in this server — I'll handle the rest.\n"
+        "-# Prefer typing? `/seteventchannel`, then `/addevent`.\n\n"
+        "## 🧭 The essentials\n"
+        "`/event` — add & manage events (edit, milestones, owner, repeat, banner)\n"
+        "`/countdown` — **20 themes**, timezone, time format, role pings, digest\n"
+        "`/listevents` · `/nextevent` · `/healthcheck` · `/chronohelp`\n\n"
+        "## 💎 Tiers\n"
+        "🆓 **Free** — 1 event\n"
+        "⭐ **Supporter** — 3 events, free with `/vote`\n"
+        "💎 **Pro** — unlimited + a countdown in *every* channel · $2.99/mo\n\n"
+        f"-# Lost the button? `/resendsetup` · FAQ: {FAQ_URL} · Support: {SUPPORT_SERVER_URL}\n"
+        "Now go — I'll be here, politely bullying time into behaving. 💜"
     )
 
     sent_dm = False
@@ -1533,7 +1539,6 @@ async def send_onboarding_for_guild(guild: discord.Guild):
     if contact_user:
         try:
             await contact_user.send(base_message)
-            await contact_user.send(supporter_message)
             sent_dm = True
         except discord.Forbidden:
             sent_dm = False
@@ -4002,7 +4007,7 @@ class GuidedFirstEventModal(discord.ui.Modal):
         proceed, content, embed = await setup_countdown_channel(guild, channel, interaction.user)
         if not proceed:
             if embed is not None:
-                await interaction.edit_original_response(content=content, embed=embed)
+                await interaction.edit_original_response(content=content, embed=embed, view=build_pro_subscribe_view())
             else:
                 await interaction.edit_original_response(content=content)
             return
@@ -4073,7 +4078,7 @@ class GuidedChannelSelect(discord.ui.ChannelSelect):
         guild_state = get_guild_state(guild.id)
         already = str(channel.id) in guild_state.get("channels", {})
         if not already and not can_add_countdown_channel(guild_state, channel.id):
-            await interaction.response.send_message(embed=_pro_channel_gate_embed(), ephemeral=True)
+            await send_pro_gate(interaction, embed=_pro_channel_gate_embed())
             return
 
         # send_modal MUST be the first response (you can't defer first), so open it
@@ -4156,7 +4161,7 @@ async def seteventchannel(interaction: discord.Interaction):
 
     proceed, content, embed = await setup_countdown_channel(guild, interaction.channel, interaction.user)
     if embed is not None:
-        await interaction.edit_original_response(content=content, embed=embed)
+        await interaction.edit_original_response(content=content, embed=embed, view=build_pro_subscribe_view())
     else:
         await interaction.edit_original_response(content=content)
 
@@ -4396,10 +4401,12 @@ class CountdownThemeApplyButton(discord.ui.Button):
             return
         # Pro-only themes: a Top.gg vote does NOT unlock these.
         if theme_is_pro_only(tid) and not is_pro(g):
-            await interaction.response.send_message(
-                f"💎 **{label}** is a Chromie Pro–exclusive theme ($2.99/mo). Voting doesn't unlock "
-                "this one — subscribe via Discord Server Subscription.",
-                ephemeral=True,
+            await send_pro_gate(
+                interaction,
+                content=(
+                    f"💎 **{label}** is a Chromie Pro–exclusive theme ($2.99/mo). Voting doesn't unlock "
+                    "this one — subscribe via Discord Server Subscription."
+                ),
             )
             return
         # Supporter themes: Pro or an active vote from the caller.
@@ -4699,9 +4706,9 @@ class CountdownDigestToggle(discord.ui.Button):
         gid, cid = view.guild_id, view.channel_id
         g = get_guild_state(gid)
         if not is_pro(g):
-            await interaction.response.send_message(
-                "💎 The **weekly digest** is a Chromie Pro feature ($2.99/mo). Subscribe via Discord Server Subscription.",
-                ephemeral=True,
+            await send_pro_gate(
+                interaction,
+                content="💎 The **weekly digest** is a Chromie Pro feature ($2.99/mo). Subscribe via Discord Server Subscription.",
             )
             return
         cs = get_channel_state(gid, cid)
@@ -4859,10 +4866,12 @@ class CountdownSettingSelect(discord.ui.Select):
             )
         elif choice in ("title", "description"):
             if not is_pro(g):
-                await interaction.response.send_message(
-                    f"💎 Custom countdown {'titles' if choice == 'title' else 'descriptions'} are a "
-                    "**Chromie Pro** feature ($2.99/mo). Subscribe via Discord Server Subscription.",
-                    ephemeral=True,
+                await send_pro_gate(
+                    interaction,
+                    content=(
+                        f"💎 Custom countdown {'titles' if choice == 'title' else 'descriptions'} are a "
+                        "**Chromie Pro** feature ($2.99/mo). Subscribe via Discord Server Subscription."
+                    ),
                 )
                 return
             if choice == "title":
@@ -4877,9 +4886,9 @@ class CountdownSettingSelect(discord.ui.Select):
                     max_len=1500, style=discord.TextStyle.paragraph))
         elif choice == "digest":
             if not is_pro(g):
-                await interaction.response.send_message(
-                    "💎 The **weekly digest** is a Chromie Pro feature ($2.99/mo). Subscribe via Discord Server Subscription.",
-                    ephemeral=True,
+                await send_pro_gate(
+                    interaction,
+                    content="💎 The **weekly digest** is a Chromie Pro feature ($2.99/mo). Subscribe via Discord Server Subscription.",
                 )
                 return
             digest = get_channel_state(gid, cid).get("digest") or {}
@@ -4894,10 +4903,12 @@ class CountdownSettingSelect(discord.ui.Select):
             )
         elif choice == "buildyourown":
             if not is_pro(g):
-                await interaction.response.send_message(
-                    "💎 **Build-your-own themes** are a Chromie Pro feature ($2.99/mo) — design your own "
-                    "embed color, emoji, title and footer. Subscribe via Discord Server Subscription.",
-                    ephemeral=True,
+                await send_pro_gate(
+                    interaction,
+                    content=(
+                        "💎 **Build-your-own themes** are a Chromie Pro feature ($2.99/mo) — design your own "
+                        "embed color, emoji, title and footer. Subscribe via Discord Server Subscription."
+                    ),
                 )
                 return
             await interaction.response.send_modal(CountdownBuildModal(gid, cid, interaction))
@@ -5587,18 +5598,18 @@ class EventActionSelect(discord.ui.Select):
                 view=EventBannerView(gid, cid, ev))
         elif choice == "repeat":
             if not is_pro(g):
-                await interaction.response.send_message(
-                    "💎 Recurring reminders are a **Chromie Pro** feature ($2.99/mo). Subscribe via Discord Server Subscription.",
-                    ephemeral=True)
+                await send_pro_gate(
+                    interaction,
+                    content="💎 Recurring reminders are a **Chromie Pro** feature ($2.99/mo). Subscribe via Discord Server Subscription.")
                 return
             await interaction.response.edit_message(
                 embed=discord.Embed(title="🔁 Repeat", description="Set or turn off recurring reminders.", color=EMBED_COLOR),
                 view=EventRepeatView(gid, cid, ev))
         elif choice == "dupe":
             if not is_pro(g):
-                await interaction.response.send_message(
-                    "💎 Duplicating events is a **Chromie Pro** feature ($2.99/mo). Subscribe via Discord Server Subscription.",
-                    ephemeral=True)
+                await send_pro_gate(
+                    interaction,
+                    content="💎 Duplicating events is a **Chromie Pro** feature ($2.99/mo). Subscribe via Discord Server Subscription.")
                 return
             await interaction.response.send_modal(EventDupeModal(gid, cid, ev, interaction))
         elif choice == "delete":

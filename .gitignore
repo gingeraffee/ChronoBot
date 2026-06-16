@@ -2,7 +2,7 @@ __pycache__/
 *.pyc
 *.pyo
 .env
-.claude/worktrees/funny-sutherland/
+.claude/worktrees/
 
 # Production data — NEVER commit. Contains all 600 servers' configs + Pro/subscription data.
 chromie_state.json
