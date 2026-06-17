@@ -1357,20 +1357,12 @@ def build_perm_howto(channel: discord.abc.GuildChannel, missing: list[str]) -> s
     ch_name = getattr(channel, "name", "this channel")
 
     return (
-        f"**Missing permissions in #{ch_name}:**\n"
+        "**What's missing:**\n"
         f"{pretty}\n\n"
-        "**Fix (channel-specific):**\n"
-        f"1) Right-click **#{ch_name}** → **Edit Channel**\n"
-        "2) Go to **Permissions**\n"
-        "3) **Add Members or Roles** → select **ChronoBot/Chromie** (or its role)\n"
-        "4) Set these to **Allow (✅)**:\n"
-        "   • View Channel\n"
-        "   • Send Messages\n"
-        "   • Embed Links\n"
-        "   • Read Message History\n"
-        "   • Manage Messages\n"
-        "5) Remove any **red ❌ denies** for the bot/role (deny overrides allow)\n\n"
-        "✅ Then run `/healthcheck` to confirm everything is fixed."
+        "## ✅ 30-second fix\n"
+        f"**#{ch_name} → Edit Channel → Permissions** → add **Chromie** (or its role) → "
+        "set the above to **Allow ✅**.\n"
+        "-# Already added me? A red ❌ deny overrides an allow — clear those too."
     )
 
 
@@ -1398,19 +1390,17 @@ async def notify_owner_missing_perms(
 
     chan_name = f"#{getattr(channel, 'name', 'unknown')}" if channel else "(unknown channel)"
     header = (
-        "⚠️ **ChronoBot permission issue**\n\n"
-        f"I tried to **{action}** in **{chan_name}** on **{guild.name}**, but I’m missing permissions.\n\n"
+        "## 🔒 Quick permission fix\n"
+        f"Hey! I couldn't **{action}** in **{chan_name}** on **{guild.name}** — I just need a nudge on channel permissions. 💜\n\n"
     )
 
     howto = build_perm_howto(channel, missing) if channel else (
-        "Please ensure the bot can View Channel, Send Messages, Embed Links, Read Message History, "
-        "and Manage Messages in the channel you set for countdowns.\n\n"
-        "✅ Then run `/healthcheck` to confirm everything is fixed."
+        "Please make sure I can **View Channel**, **Send Messages**, **Embed Links**, "
+        "**Read Message History**, and **Manage Messages** in your board's channel."
     )
 
     footer = (
-        "\n\n📅 I’ll only send one reminder per day for this specific issue.\n"
-        "Next step: run `/healthcheck` (Manage Server) for diagnostics."
+        "\n\n-# Run `/healthcheck` to confirm · I’ll only mention this once a day."
     )
 
     text = header + howto + footer
@@ -4200,7 +4190,7 @@ async def setup_countdown_channel(guild: discord.Guild, channel, actor):
                 guild,
                 channel,
                 missing=blocking,
-                action="post the countdown (it can't show until this is fixed)",
+                action="post the countdown",
             )
 
     # 🔔 Notify owner + optionally post an audit note in the channel.
@@ -4292,7 +4282,7 @@ async def setup_streak_channel(guild: discord.Guild, channel, actor):
         if blocking:
             await notify_owner_missing_perms(
                 guild, channel, missing=blocking,
-                action="post the streak board (it can't show until this is fixed)",
+                action="post the streak board",
             )
 
     # Build the streak board immediately so the channel shows something.
