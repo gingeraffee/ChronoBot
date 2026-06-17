@@ -85,14 +85,14 @@ def test_add_event_core_appends_and_defaults_dm_off():
     assert ev["dm_opt_in"] is False  # owner DMs opt-in default off
 
 
-def test_add_event_core_free_limit_is_three():
+def test_add_event_core_free_limit_is_one():
+    # Free tier is 1 event/channel (Supporter=3, Pro=∞ live in test_event_limits.py).
     gid, cid = fresh_gid(), 1
-    for d in ("12/01/2099", "12/02/2099", "12/03/2099"):
-        msg, _ = _add(gid, cid, date=d)
-        assert "Added event" in msg
-    msg, _ = _add(gid, cid, date="12/04/2099")
+    msg, _ = _add(gid, cid, date="12/01/2099")
+    assert "Added event" in msg
+    msg, _ = _add(gid, cid, date="12/02/2099")
     assert "limit reached" in msg.lower()
-    assert len(chromie.get_channel_state(gid, cid)["events"]) == 3
+    assert len(chromie.get_channel_state(gid, cid)["events"]) == 1
 
 
 def test_add_event_core_rejects_past_and_bad_dates():

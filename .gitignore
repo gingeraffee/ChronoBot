@@ -2,6 +2,9 @@ __pycache__/
 *.pyc
 *.pyo
 .env
+.venv/
+venv/
+run_local.ps1
 .claude/worktrees/
 
 # Production data — NEVER commit. Contains all 600 servers' configs + Pro/subscription data.

@@ -29,6 +29,10 @@ VERSION = "2026-01-11"
 DEFAULT_TZ = ZoneInfo("America/Chicago")
 UPDATE_INTERVAL_SECONDS = 60
 DEFAULT_MILESTONES = [100, 60, 30, 14, 7, 2, 1, 0]
+# Streak (count-UP) milestones in DAYS SINCE the start date. Day 1 is the kickoff;
+# beyond the last entry the engine fires yearly anniversaries forever (see Phase 5).
+# This default ladder is free; Pro users can customize it.
+DEFAULT_STREAK_MILESTONES = [1, 7, 30, 60, 90, 100, 180, 365]
 MILESTONE_CLEANUP_AFTER_EVENT_SECONDS = 86400  # 24 hours
 
 DATA_FILE = Path(os.getenv("CHROMIE_DATA_PATH", "/var/data/chromie_state.json"))
@@ -766,6 +770,7 @@ def get_guild_state(guild_id: int) -> dict:
 # already exists is always editable, even if the guild later drops below Plus.
 
 FREE_CHANNEL_LIMIT = 1  # free servers get exactly one countdown channel
+FREE_STREAK_CHANNEL_LIMIT = 1  # free servers also get exactly one streak channel (its own slot)
 
 
 def _default_channel_state() -> dict:
@@ -785,6 +790,7 @@ def _default_channel_state() -> dict:
         "time_unit": "discord",
         "timezone": "UTC",
         "custom_theme": None,  # Pro build-your-own: {title, subtitle, footer, color(int), emoji}
+        "kind": "countdown",   # "countdown" (default) or "streak" — set by /seteventchannel vs /setstreakchannel
     }
 
 
@@ -817,9 +823,15 @@ def iter_channel_states(guild_state: dict):
 
 
 def count_countdown_channels(guild_state: dict) -> int:
-    """Number of real (numeric-keyed) countdown channels in a guild."""
-    return sum(1 for cid in guild_state.get("channels", {})
-               if isinstance(cid, str) and cid.isdigit())
+    """Number of real (numeric-keyed) countdown channels in a guild (excludes streak channels)."""
+    return sum(1 for cid, cs in guild_state.get("channels", {}).items()
+               if isinstance(cid, str) and cid.isdigit() and not is_streak_channel(cs))
+
+
+def count_streak_channels(guild_state: dict) -> int:
+    """Number of real (numeric-keyed) streak channels in a guild."""
+    return sum(1 for cid, cs in guild_state.get("channels", {}).items()
+               if isinstance(cid, str) and cid.isdigit() and is_streak_channel(cs))
 
 
 def can_add_countdown_channel(guild_state: dict, channel_id: int) -> bool:
@@ -833,6 +845,35 @@ def can_add_countdown_channel(guild_state: dict, channel_id: int) -> bool:
     if is_pro(guild_state):
         return True
     return count_countdown_channels(guild_state) < FREE_CHANNEL_LIMIT
+
+
+def can_add_streak_channel(guild_state: dict, channel_id: int) -> bool:
+    """
+    Whether a streak board can be set up in `channel_id`. Streak channels have their
+    OWN free slot, separate from countdown channels. Always True if the channel is
+    already a streak channel; otherwise free servers are capped at
+    FREE_STREAK_CHANNEL_LIMIT and ChronoBot Plus (is_pro) is unlimited.
+    """
+    existing = guild_state.get("channels", {}).get(str(channel_id))
+    if existing is not None and is_streak_channel(existing):
+        return True
+    if is_pro(guild_state):
+        return True
+    return count_streak_channels(guild_state) < FREE_STREAK_CHANNEL_LIMIT
+
+
+def is_streak_event(ev: dict) -> bool:
+    """True if this event is a count-UP streak rather than a countdown.
+    Missing/absent `type` is treated as 'countdown', so every legacy event
+    stays a countdown without any migration."""
+    return isinstance(ev, dict) and ev.get("type") == "streak"
+
+
+def is_streak_channel(channel_state: dict) -> bool:
+    """True if this channel renders a streak board rather than a countdown board.
+    Missing/absent `kind` is treated as 'countdown', so every legacy channel
+    stays a countdown without any migration."""
+    return isinstance(channel_state, dict) and channel_state.get("kind") == "streak"
 
 
 def resolve_event_channel(guild_state: dict, channel_id):
@@ -850,9 +891,10 @@ def resolve_event_channel(guild_state: dict, channel_id):
     """
     channels = guild_state.get("channels", {})
     cid_str = str(channel_id)
-    if cid_str.isdigit() and cid_str in channels:
+    # Only resolve COUNTDOWN channels — a streak channel must never receive a countdown event.
+    if cid_str.isdigit() and cid_str in channels and not is_streak_channel(channels[cid_str]):
         return int(cid_str), channels[cid_str]
-    real = [(int(c), b) for c, b in channels.items() if c.isdigit()]
+    real = [(int(c), b) for c, b in channels.items() if c.isdigit() and not is_streak_channel(b)]
     if len(real) == 1:
         return real[0]
     return None, None
@@ -1000,6 +1042,11 @@ def prune_past_events(guild_state: dict, now: Optional[datetime] = None) -> int:
     removed = 0
 
     for ev in events:
+        # Streaks count UP from a start date and are intentionally "in the past" —
+        # they have no end and must never be swept by countdown pruning.
+        if is_streak_event(ev):
+            kept.append(ev)
+            continue
         ts = ev.get("timestamp")
         if not isinstance(ts, (int, float)):
             kept.append(ev)
@@ -1525,10 +1572,13 @@ async def send_onboarding_for_guild(guild: discord.Guild):
         "`/event` — add & manage events (edit, milestones, owner, repeat, banner)\n"
         "`/countdown` — **20 themes**, timezone, time format, role pings, digest\n"
         "`/listevents` · `/nextevent` · `/healthcheck` · `/chronohelp`\n\n"
+        "## 🔥 Streaks — count *up*\n"
+        "`/setstreakchannel`, then `/addstreak` — track \"days since\" (smoke-free, sober, injury-free…). I cheer every milestone, and a slip just resets to Day 0 — no shame.\n"
+        "-# Free includes 1 streak board · Pro tracks unlimited.\n\n"
         "## 💎 Tiers\n"
         "🆓 **Free** — 1 event\n"
         "⭐ **Supporter** — 3 events, free with `/vote`\n"
-        "💎 **Pro** — unlimited + a countdown in *every* channel · $2.99/mo\n\n"
+        "💎 **Pro** — unlimited + a board in *every* channel (countdowns **&** streaks) · $2.99/mo\n\n"
         f"-# Lost the button? `/resendsetup` · FAQ: {FAQ_URL} · Support: {SUPPORT_SERVER_URL}\n"
         "Now go — I'll be here, politely bullying time into behaving. 💜"
     )
@@ -1845,6 +1895,7 @@ HELP_PAGES = {
             "`/addevent` — add an event",
             "`/event` — manage events (edit, milestones, owner, repeat, …)",
             "`/countdown` — channel settings (theme, timezone, format, …)",
+            "`/setstreakchannel` + `/addstreak` — 🔥 streak boards (count up 'days since')",
             "`/vote` — check your tier + unlock Supporter",
         ],
     },
@@ -1860,6 +1911,20 @@ HELP_PAGES = {
             "   • milestones, reminder time, silence",
             "   • owner + owner-DM opt-in",
             "   • 💎 duplicate, 💎 repeat, banner",
+        ],
+    },
+    "streaks": {
+        "title": "Streaks 🔥 — count up",
+        "desc": "Track \"days since\" milestones — sober, smoke-free, injury-free, days-since-incident. Streaks count UP from a start date, never expire, and celebrate every milestone.",
+        "lines": [
+            "`/setstreakchannel` — turn a channel into a streak board",
+            "`/addstreak` — start a streak (pick the day you began)",
+            "`/resetstreak` — reset to Day 0 after a slip (posts a supportive note)",
+            "`/setstreakmilestones` — 💎 custom milestone days (Pro)",
+            "",
+            "Milestones fire at 1 · 7 · 30 · 60 · 90 · 100 · 180 · 365 days — then every anniversary, forever.",
+            "",
+            "**Limits:** 🆓 Free & ⭐ Supporter — 1 streak • 💎 Pro — unlimited + custom milestones",
         ],
     },
     "reminders": {
@@ -1964,6 +2029,7 @@ HELP_PAGES = {
             "• 📊 Weekly digest (`/countdown` → Weekly digest)",
             "• 🎨 All Supporter features (permanent, no voting needed)",
             "• 📌 Multiple countdown boards per server",
+            "• 🔥 Unlimited streaks + custom milestone ladders",
             "• 🏆 Priority support",
             "",
             "**How to subscribe:**",
@@ -1999,6 +2065,7 @@ HELP_PAGES = {
 HELP_OPTIONS = [
     ("Quick Start", "quick", "Start here"),
     ("Events", "events", "Add/edit/list"),
+    ("Streaks", "streaks", "Count-up 'days since'"),
     ("Reminders", "reminders", "Milestones & repeats"),
     ("Customization", "customize", "Themes & banners"),
     ("Owner DMs", "owner", "Assign event owner"),
@@ -2905,6 +2972,89 @@ def build_embed_for_channel(channel_state: dict, guild_state: dict) -> discord.E
 
 
 
+def build_streak_embed_for_channel(channel_state: dict, guild_state: dict) -> discord.Embed:
+    """Render the pinned STREAK board for one channel — count-UP "days since" trophies,
+    longest streak first. Mirrors build_embed_for_channel's structure/theming but counts
+    UP from each streak's start date and never filters anything out (streaks don't end)."""
+    layout = get_theme_layout(channel_state) or {}
+
+    streaks = [ev for ev in channel_state.get("events", []) if is_streak_event(ev)]
+    tz = get_guild_timezone(channel_state)
+    now = datetime.now(tz)
+
+    # Longest-running streak first (oldest start date = biggest number = top of the trophy case).
+    def _ts(ev):
+        try:
+            return float(ev.get("timestamp", 0))
+        except Exception:
+            return 0.0
+    streaks.sort(key=_ts)
+
+    override_title = (channel_state.get("countdown_title_override") or "").strip()
+    embed_title = override_title[:256] if override_title else "🔥 Streak Tracker"
+
+    embed = discord.Embed(
+        title=embed_title,
+        color=layout.get("color", discord.Color.from_rgb(140, 82, 255)),
+    )
+    emoji = layout.get("emoji", "🔥")
+
+    custom_intro = (channel_state.get("countdown_description_override") or "").strip()
+    header_lines = []
+    if custom_intro:
+        header_lines.append(custom_intro)
+    header_lines.append("💪 Days since — keep the streak alive:")
+    header = "\n".join(header_lines).strip()
+
+    blocks = []
+    banner_url = None
+    for ev in streaks:
+        try:
+            start = datetime.fromtimestamp(float(ev["timestamp"]), tz=tz)
+        except Exception:
+            continue
+
+        if banner_url is None:
+            u = ev.get("banner_url")
+            if isinstance(u, str) and u.strip():
+                banner_url = u.strip()
+
+        days = max(0, (now.date() - start.date()).days)
+        name = str(ev.get("name", "Untitled Streak"))[:256]
+        since_str = start.strftime("%B %d, %Y")
+        day_word = "day" if days == 1 else "days"
+        blocks.append(
+            f"{emoji} **{name}**\n**{days} {day_word}** — going strong since {since_str}"
+        )
+        if len(blocks) >= 10:
+            break
+
+    body = f"{header}\n\n" + (
+        "\n\n".join(blocks) if blocks else "_No streaks yet. Start one with `/addstreak`._"
+    )
+    if len(body) > 4096:
+        body = body[:4093] + "..."
+    embed.description = body
+
+    footer = layout.get("footer", "")
+    if footer:
+        embed.set_footer(text=f"{footer} • Streak counts update daily"[:2048])
+    else:
+        embed.set_footer(text="Streak counts update daily • Use /chronohelp for commands")
+
+    if banner_url:
+        embed.set_image(url=banner_url)
+    return embed
+
+
+def build_board_embed(channel_state: dict, guild_state: dict) -> discord.Embed:
+    """Pick the right board renderer for a channel based on its kind: a streak board
+    for streak channels, otherwise the classic countdown board."""
+    if is_streak_channel(channel_state):
+        return build_streak_embed_for_channel(channel_state, guild_state)
+    return build_embed_for_channel(channel_state, guild_state)
+
+
 async def rebuild_pinned_message_for_channel(
     channel: discord.TextChannel, channel_state: dict, guild_state: dict
 ):
@@ -2923,7 +3073,7 @@ async def rebuild_pinned_message_for_channel(
         except (discord.NotFound, discord.HTTPException, discord.Forbidden):
             pass
 
-    embed = build_embed_for_channel(channel_state, guild_state)
+    embed = build_board_embed(channel_state, guild_state)
 
     try:
         msg = await channel.send(embed=embed)
@@ -3070,7 +3220,7 @@ async def get_or_create_pinned_message_for_channel(
     if not allow_create:
         return None
 
-    embed = build_embed_for_channel(state_bucket, guild_state)
+    embed = build_board_embed(state_bucket, guild_state)
     try:
         msg = await channel.send(embed=embed)
         await ensure_countdown_pinned(channel.guild, channel, msg, perms=perms)
@@ -3232,7 +3382,7 @@ async def refresh_countdown_message_for_channel(
         return
 
     try:
-        await pinned.edit(embed=build_embed_for_channel(channel_state, guild_state))
+        await pinned.edit(embed=build_board_embed(channel_state, guild_state))
     except discord.NotFound:
         if channel_state.get("pinned_message_id") == pinned.id:
             channel_state["pinned_message_id"] = None
@@ -3722,6 +3872,125 @@ async def _run_countdown_cycle(guild_id, guild_state, channel, bot_member, serve
             flush_if_dirty()
 
 
+def streak_milestones_due(days_since: int, ladder, announced) -> list:
+    """Milestone day-counts that are due now (<= days_since) and not yet announced:
+    the configured ladder entries PLUS yearly anniversaries (365, 730, 1095, ...) forever."""
+    ann = set(announced or [])
+    due = set()
+    for m in (ladder or []):
+        if isinstance(m, int) and 0 < m <= days_since and m not in ann:
+            due.add(m)
+    k = 1
+    while 365 * k <= days_since:
+        anni = 365 * k
+        if anni not in ann:
+            due.add(anni)
+        k += 1
+    return sorted(due)
+
+
+def build_streak_milestone_message(*, event_name: str, days: int, milestone: int) -> str:
+    """Celebratory copy for a streak milestone (`milestone` = the day-count reached)."""
+    name = event_name or "your streak"
+    if milestone == 1:
+        return f"🎉 **{name}** — **Day 1!** The streak officially begins. You've got this. 💪"
+    if milestone == 7:
+        return f"🔥 **{name}** — **one week strong** (7 days)! Building real momentum. 🙌"
+    if milestone == 30:
+        return f"🌟 **{name}** — **30 days!** A whole month down. Incredible. 🎊"
+    if milestone == 100:
+        return f"💯 **{name}** — **100 days!** Triple digits — absolute legend. 🏆"
+    if milestone == 365:
+        return f"🥳 **{name}** — **ONE YEAR!** 365 days. This is huge — celebrate it. 🎂✨"
+    if milestone % 365 == 0:
+        years = milestone // 365
+        return f"🎂 **{name}** — **{years} years!** {milestone} days and still going. Phenomenal. 🏅"
+    return f"✨ **{name}** — **{milestone} days!** Milestone unlocked — keep the streak alive. 💜"
+
+
+async def _run_streak_cycle(guild_id, channel_state, channel, bot_member, server_state):
+    """Per-channel STREAK engine: fire any newly-due milestone celebrations (ladder +
+    yearly anniversaries) for each streak, then refresh the pinned board. Streaks never
+    end, so there is no prune and no start-blast — just count up and cheer."""
+    tz = get_guild_timezone(channel_state)
+    now = datetime.now(tz)
+    state_changed = False
+
+    for ev in [e for e in channel_state.get("events", []) if is_streak_event(e)]:
+        if ev.get("silenced"):
+            continue
+        try:
+            start = datetime.fromtimestamp(float(ev["timestamp"]), tz=tz)
+        except Exception:
+            continue
+
+        days_since = max(0, (now.date() - start.date()).days)
+
+        announced = ev.get("announced_milestones", [])
+        if not isinstance(announced, list):
+            announced = []
+            ev["announced_milestones"] = announced
+            state_changed = True
+
+        ladder = ev.get("milestones", DEFAULT_STREAK_MILESTONES)
+        for milestone in streak_milestones_due(days_since, ladder, announced):
+            mention_prefix, allowed_mentions = build_milestone_mention(channel, channel_state)
+            body = build_streak_milestone_message(
+                event_name=ev.get("name", "Streak"), days=days_since, milestone=milestone
+            )
+            try:
+                m = await channel.send(f"{mention_prefix}{body}", allowed_mentions=allowed_mentions)
+                ev.setdefault("reminder_messages", []).append(
+                    {"channel_id": channel.id, "message_id": m.id, "sent_at": time.time()}
+                )
+                announced.append(milestone)
+                ev["announced_milestones"] = announced
+                state_changed = True
+            except discord.Forbidden:
+                missing = missing_channel_perms(channel, channel.guild)
+                await notify_owner_missing_perms(
+                    channel.guild, channel, missing=missing,
+                    action="post the streak milestone message",
+                )
+                break
+            except discord.HTTPException:
+                break
+
+    if state_changed:
+        save_state()
+
+    # ---- Refresh the pinned streak board ----
+    try:
+        pinned = await get_or_create_pinned_message_for_channel(
+            channel, channel_state, server_state, allow_create=True
+        )
+    except Exception:
+        print(f"[Guild {guild_id}] streak get_or_create_pinned_message failed:\n{traceback.format_exc()}")
+        pinned = None
+
+    if pinned is not None:
+        try:
+            embed = build_board_embed(channel_state, server_state)
+        except Exception:
+            print(f"[Guild {guild_id}] build_board_embed (streak) failed:\n{traceback.format_exc()}")
+            embed = None
+        if embed is not None:
+            try:
+                await pinned.edit(embed=embed)
+            except discord.NotFound:
+                if channel_state.get("pinned_message_id") == pinned.id:
+                    channel_state["pinned_message_id"] = None
+                    save_state()
+            except discord.Forbidden:
+                missing = missing_channel_perms(channel, channel.guild)
+                await notify_owner_missing_perms(
+                    channel.guild, channel, missing=missing,
+                    action="edit/update the pinned streak board",
+                )
+            except discord.HTTPException as e:
+                print(f"[Guild {guild_id}] Failed to edit streak board: {e}")
+
+
 @tasks.loop(seconds=UPDATE_INTERVAL_SECONDS)
 async def update_countdowns():
     """Per-channel countdown engine: for each guild, refresh every countdown
@@ -3740,9 +4009,16 @@ async def update_countdowns():
                 bot_member = await get_bot_member(channel.guild)
                 if bot_member is None:
                     continue
-                await _run_countdown_cycle(
-                    guild_id_int, channel_state, channel, bot_member, guild_state
-                )
+                # Streak channels count UP and run their own cycle; countdown
+                # channels use the classic engine.
+                if is_streak_channel(channel_state):
+                    await _run_streak_cycle(
+                        guild_id_int, channel_state, channel, bot_member, guild_state
+                    )
+                else:
+                    await _run_countdown_cycle(
+                        guild_id_int, channel_state, channel, bot_member, guild_state
+                    )
             except Exception as e:
                 print(f"[Guild {gid_str} / channel {cid}] update_countdowns crashed: {type(e).__name__}: {e}")
                 continue
@@ -3961,6 +4237,90 @@ async def setup_countdown_channel(guild: discord.Guild, channel, actor):
     )
 
 
+def _pro_streak_channel_gate_embed() -> discord.Embed:
+    """Upsell shown when a Free server tries to set up a 2nd+ streak channel."""
+    return discord.Embed(
+        title="💎 Multiple streak boards are a Chromie Pro feature",
+        description=(
+            "This server already has its free streak channel. With **Chromie Pro "
+            "($2.99/month)** you can run a streak board in *every* channel, track unlimited "
+            "streaks per board, and set custom milestone ladders.\n\n"
+            "Subscribe via **Discord Server Subscription**, then run `/setstreakchannel` here again."
+        ),
+        color=discord.Color.orange(),
+    )
+
+
+async def setup_streak_channel(guild: discord.Guild, channel, actor):
+    """Claim `channel` as a STREAK (count-up) channel — the core of /setstreakchannel.
+    Mirrors setup_countdown_channel but for streak boards. Returns (proceed, content, embed)."""
+    if not isinstance(channel, discord.TextChannel):
+        return (False, "Please pick a **regular text channel** (not a thread/forum).", None)
+
+    guild_state = get_guild_state(guild.id)
+    channels = guild_state.setdefault("channels", {})
+
+    # Already configured? Be explicit about cross-kind conflicts so the two board
+    # types never collide on one channel.
+    existing = channels.get(str(channel.id))
+    if existing is not None:
+        if is_streak_channel(existing):
+            return (True, "✅ This channel is already a streak channel.", None)
+        return (
+            False,
+            "❌ This channel is already a **countdown** channel. Pick a different channel for your streak board.",
+            None,
+        )
+
+    # Gate: 1 streak channel is free; additional streak boards need Chromie Pro.
+    if not can_add_streak_channel(guild_state, channel.id):
+        return (False, None, _pro_streak_channel_gate_embed())
+
+    cs = get_channel_state(guild.id, channel.id)
+    cs["kind"] = "streak"
+    cs["pinned_message_id"] = None  # force a fresh pin for this channel
+    cs["event_channel_set_by"] = int(actor.id)
+    cs["event_channel_set_at"] = int(time.time())
+    save_state()
+
+    # Permissions check — same blocking/degraded split as countdown channels.
+    blocking: list[str] = []
+    degraded: list[str] = []
+    if hasattr(channel, "permissions_for"):
+        missing = missing_channel_perms(channel, guild)
+        blocking, degraded = classify_missing_perms(missing)
+        if blocking:
+            await notify_owner_missing_perms(
+                guild, channel, missing=blocking,
+                action="post the streak board (it can't show until this is fixed)",
+            )
+
+    # Build the streak board immediately so the channel shows something.
+    await rebuild_pinned_message_for_channel(channel, cs, guild_state)
+
+    def _perm_names(codes):
+        return ", ".join(f"**{PERM_LABELS.get(p, p)}**" for p in codes)
+
+    if blocking:
+        extra = (
+            f"\n\n⚠️ I’m missing {_perm_names(blocking)} here, so the board can’t post yet. "
+            "I’ve messaged the server owner with a quick fix guide."
+        )
+    elif degraded:
+        extra = (
+            f"\n\nℹ️ The board is posted. Heads-up: I’m missing {_perm_names(degraded)} here — "
+            "granting it lets me keep the board pinned and tidy."
+        )
+    else:
+        extra = ""
+
+    return (
+        True,
+        "✅ This channel is now a **streak** channel.\nStart a streak with `/addstreak` here." + extra,
+        None,
+    )
+
+
 # ==========================
 # GUIDED FIRST-RUN SETUP (button flow)
 # ==========================
@@ -4164,6 +4524,308 @@ async def seteventchannel(interaction: discord.Interaction):
         await interaction.edit_original_response(content=content, embed=embed, view=build_pro_subscribe_view())
     else:
         await interaction.edit_original_response(content=content)
+
+
+def resolve_streak_channel(guild_state: dict, channel_id):
+    """Pick which streak channel an /addstreak or /resetstreak acts on. Returns
+    (cid:int|None, cs|None): the current channel if it's a streak channel, else the
+    sole streak channel if there's exactly one, else (None, None) for guidance."""
+    channels = guild_state.get("channels", {})
+    if channel_id is not None:
+        cur = channels.get(str(channel_id))
+        if cur is not None and is_streak_channel(cur):
+            return (int(channel_id), cur)
+    streak_cids = [int(cid) for cid, cs in channels.items()
+                   if isinstance(cid, str) and cid.isdigit() and is_streak_channel(cs)]
+    if len(streak_cids) == 1:
+        return (streak_cids[0], channels[str(streak_cids[0])])
+    return (None, None)
+
+
+@bot.tree.command(name="setstreakchannel", description="Turn this channel into a streak (count-up) board.")
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.checks.has_permissions(manage_guild=True)
+@app_commands.guild_only()
+async def setstreakchannel(interaction: discord.Interaction):
+    guild = interaction.guild
+    assert guild is not None
+    await interaction.response.defer(ephemeral=True)
+
+    if not isinstance(interaction.channel, discord.TextChannel):
+        await interaction.edit_original_response(
+            content="Please run `/setstreakchannel` in a **regular text channel** (not a thread/forum)."
+        )
+        return
+
+    member = interaction.user
+    if not isinstance(member, discord.Member):
+        member = guild.get_member(interaction.user.id) or member
+    perms = getattr(member, "guild_permissions", None)
+    if not perms or not (perms.manage_guild or perms.administrator):
+        await interaction.edit_original_response(
+            content="You need **Manage Server** (or **Administrator**) to set up a streak channel."
+        )
+        return
+
+    proceed, content, embed = await setup_streak_channel(guild, interaction.channel, interaction.user)
+    if embed is not None:
+        await interaction.edit_original_response(content=content, embed=embed, view=build_pro_subscribe_view())
+    else:
+        await interaction.edit_original_response(content=content)
+
+
+@bot.tree.command(name="addstreak", description="Start a count-up streak ('days since') on a streak board.")
+@app_commands.describe(
+    date="Start date in MM/DD/YYYY — when the streak began (today or earlier)",
+    name="What you're counting, e.g. 'Smoke-free'",
+)
+async def addstreak(interaction: discord.Interaction, date: str, name: str):
+    await interaction.response.defer(ephemeral=True)
+    user = interaction.user
+
+    if interaction.guild is not None:
+        guild = interaction.guild
+        member = interaction.user
+        if not isinstance(member, discord.Member):
+            member = guild.get_member(user.id)
+            if member is None:
+                try:
+                    member = await guild.fetch_member(user.id)
+                except Exception:
+                    member = None
+        perms = getattr(member, "guild_permissions", None)
+        if not perms or not (perms.manage_guild or perms.administrator):
+            await interaction.edit_original_response(
+                content="You need the **Manage Server** or **Administrator** permission to add streaks in this server."
+            )
+            return
+        guild_state = get_guild_state(guild.id)
+        target_channel_id = interaction.channel_id
+    else:
+        user_links = get_user_links()
+        linked_guild_id = user_links.get(str(user.id))
+        if not linked_guild_id:
+            await interaction.edit_original_response(
+                content="I don't know which server to use for your DMs yet.\nIn the server, run `/linkserver`, then DM me `/addstreak` again."
+            )
+            return
+        guild = bot.get_guild(linked_guild_id)
+        if not guild:
+            await interaction.edit_original_response(
+                content="I can't find the linked server anymore. Re-add me and run `/linkserver` again."
+            )
+            return
+        guild_state = get_guild_state(guild.id)
+        member = guild.get_member(user.id)
+        target_channel_id = None
+
+    cid, cs = resolve_streak_channel(guild_state, target_channel_id)
+    if cs is None:
+        if count_streak_channels(guild_state) == 0:
+            msg = "This server has no streak board yet.\nRun `/setstreakchannel` in the channel where you want streaks pinned, then `/addstreak`."
+        else:
+            msg = "This server has multiple streak channels.\nRun `/addstreak` **inside** the specific streak channel you want."
+        await interaction.edit_original_response(content=msg)
+        return
+
+    msg, _nudge = await add_streak_core(
+        guild, guild_state, cs, cid, actor=user, member=member, date=date, name=name
+    )
+    await interaction.edit_original_response(content=msg)
+
+
+def _ordered_streaks(cs: dict) -> list:
+    """Streaks on a board in board order (longest-running first). The reset picker and
+    the board both use this, so the numbers in the dropdown always match the board."""
+    streaks = [ev for ev in cs.get("events", []) if is_streak_event(ev)]
+    streaks.sort(key=lambda e: float(e.get("timestamp", 0)) if isinstance(e.get("timestamp"), (int, float)) else 0.0)
+    return streaks
+
+
+async def streak_index_autocomplete(interaction: discord.Interaction, current: str) -> List[app_commands.Choice[int]]:
+    """Autocomplete for /resetstreak: shows '1. Name (N days)' so you pick a streak from a list."""
+    guild = interaction.guild
+    if guild is None:
+        return []
+    g = get_guild_state(guild.id)
+    _cid, cs = resolve_streak_channel(g, interaction.channel_id)
+    if cs is None:
+        return []
+    tz = get_guild_timezone(cs)
+    now = datetime.now(tz)
+    cur = (current or "").strip().lower()
+
+    choices: List[app_commands.Choice[int]] = []
+    for idx, ev in enumerate(_ordered_streaks(cs), start=1):
+        name = ev.get("name") or "Streak"
+        try:
+            start = datetime.fromtimestamp(float(ev["timestamp"]), tz=tz)
+            days = max(0, (now.date() - start.date()).days)
+        except Exception:
+            days = 0
+        label = f"{idx}. {name} ({days} day{'s' if days != 1 else ''})"
+        if cur and cur not in label.lower() and cur != str(idx):
+            continue
+        choices.append(app_commands.Choice(name=label[:100], value=idx))
+        if len(choices) >= 25:
+            break
+    return choices
+
+
+def build_streak_reset_message(name: str) -> str:
+    """Public, supportive 'streak was reset' announcement for the channel. Restarts are
+    framed as a fresh start, never a failure, and the resetter is NOT named — it rallies
+    the community without outing anyone (matters for sobriety/recovery boards)."""
+    templates = [
+        "🔄 **{name}** is back to **Day 0** — a fresh start begins. Every streak starts with day one, and this one just did. You've got this. 💜",
+        "🌱 New beginning for **{name}** — the counter's back to **Day 0**. Slips happen; what counts is starting again. 💪",
+        "💜 **{name}** has been reset to **Day 0**. No shame in a restart — the comeback is part of the story. Let's go again. ✨",
+    ]
+    return random.choice(templates).format(name=name or "The streak")
+
+
+@bot.tree.command(name="resetstreak", description="Reset a streak back to Day 0 (e.g. after a slip) — starts the count over.")
+@app_commands.describe(index="Which streak to reset — pick from the list (only needed if the board has more than one)")
+@app_commands.autocomplete(index=streak_index_autocomplete)
+@app_commands.guild_only()
+async def resetstreak(interaction: discord.Interaction, index: Optional[int] = None):
+    await interaction.response.defer(ephemeral=True)
+    guild = interaction.guild
+    if guild is None:
+        await interaction.edit_original_response(content="Run `/resetstreak` inside the server's streak channel.")
+        return
+
+    member = interaction.user
+    if not isinstance(member, discord.Member):
+        member = guild.get_member(interaction.user.id) or member
+    perms = getattr(member, "guild_permissions", None)
+    if not perms or not (perms.manage_guild or perms.administrator):
+        await interaction.edit_original_response(
+            content="You need **Manage Server** (or **Administrator**) to reset a streak."
+        )
+        return
+
+    guild_state = get_guild_state(guild.id)
+    cid, cs = resolve_streak_channel(guild_state, interaction.channel_id)
+    if cs is None:
+        await interaction.edit_original_response(
+            content="No streak board here. Run `/resetstreak` inside your streak channel."
+        )
+        return
+
+    streaks = _ordered_streaks(cs)
+    if not streaks:
+        await interaction.edit_original_response(content="There are no streaks on this board yet.")
+        return
+
+    if index is not None:
+        target = streaks[index - 1] if 1 <= index <= len(streaks) else None
+    elif len(streaks) == 1:
+        target = streaks[0]
+    else:
+        listing = "\n".join(f"**{i}.** {ev.get('name')}" for i, ev in enumerate(streaks, start=1))
+        await interaction.edit_original_response(
+            content=f"This board has multiple streaks — run `/resetstreak` again and pick one from the **index** list:\n{listing}"
+        )
+        return
+
+    if target is None:
+        await interaction.edit_original_response(
+            content="That streak number isn't on this board — open the **index** picker to see the list."
+        )
+        return
+
+    tz = get_guild_timezone(cs)
+    now = datetime.now(tz)
+    target["timestamp"] = int(now.timestamp())
+    target["announced_milestones"] = []
+    save_state()
+
+    channel = await get_text_channel(cid)
+    if channel is not None:
+        await rebuild_pinned_message_for_channel(channel, cs, guild_state)
+        # Public, supportive shout-out so the whole community rallies around the fresh start.
+        try:
+            await channel.send(build_streak_reset_message(target.get("name") or "The streak"))
+        except (discord.Forbidden, discord.HTTPException):
+            pass
+
+    await interaction.edit_original_response(
+        content=f"💜 Reset **{target.get('name')}** to Day 0 — posted a fresh-start note to the channel."
+    )
+
+
+def parse_streak_milestones(text: str):
+    """Parse '7, 30, 100' into a sorted, de-duped list of positive day-counts, or None
+    if nothing usable was given. (Yearly anniversaries always fire regardless.)"""
+    if not text or not text.strip():
+        return None
+    out = []
+    for tok in text.replace(",", " ").replace(";", " ").split():
+        try:
+            n = int(tok)
+        except ValueError:
+            return None
+        if n > 0:
+            out.append(n)
+    if not out:
+        return None
+    return sorted(set(out))
+
+
+@bot.tree.command(name="setstreakmilestones", description="Customize which day-counts your streak board celebrates (Pro).")
+@require_pro("Custom streak milestones")
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.checks.has_permissions(manage_guild=True)
+@app_commands.describe(milestones="Day-counts to celebrate, e.g. '7, 30, 100, 365' (yearly anniversaries always fire too)")
+@app_commands.guild_only()
+async def setstreakmilestones(interaction: discord.Interaction, milestones: str):
+    await interaction.response.defer(ephemeral=True)
+    guild = interaction.guild
+    assert guild is not None
+
+    guild_state = get_guild_state(guild.id)
+    cid, cs = resolve_streak_channel(guild_state, interaction.channel_id)
+    if cs is None:
+        await interaction.edit_original_response(
+            content="No streak board here. Run `/setstreakmilestones` inside your streak channel."
+        )
+        return
+
+    ladder = parse_streak_milestones(milestones)
+    if not ladder:
+        await interaction.edit_original_response(
+            content="I couldn't read those. Give me positive day-counts like `7, 30, 100, 365`."
+        )
+        return
+
+    cs["default_streak_milestones"] = ladder
+
+    # Apply to streaks already on this board, re-seeding so already-passed milestones
+    # don't suddenly replay (only milestones still ahead will fire).
+    tz = get_guild_timezone(cs)
+    now = datetime.now(tz)
+    for ev in [e for e in cs.get("events", []) if is_streak_event(e)]:
+        try:
+            start = datetime.fromtimestamp(float(ev["timestamp"]), tz=tz)
+            days = max(0, (now.date() - start.date()).days)
+        except Exception:
+            days = 0
+        ev["milestones"] = list(ladder)
+        seeded = set(ev.get("announced_milestones", [])) | set(streak_milestones_due(days, ladder, []))
+        ev["announced_milestones"] = sorted(seeded)
+
+    save_state()
+
+    channel = await get_text_channel(cid)
+    if channel is not None:
+        await rebuild_pinned_message_for_channel(channel, cs, guild_state)
+
+    pretty = ", ".join(str(m) for m in ladder)
+    await interaction.edit_original_response(
+        content=f"✅ Streak milestones set to **{pretty}** days (yearly anniversaries always celebrate too)."
+    )
+
 
 @bot.tree.command(name="linkserver", description="Link yourself to this server for DM control.")
 @app_commands.checks.has_permissions(manage_guild=True)
@@ -5723,6 +6385,7 @@ async def add_event_core(guild, guild_state, cs, cid, *, actor, member, date, ti
 
     event = {
         "name": name,
+        "type": "countdown",
         "timestamp": int(dt.timestamp()),
         "owner_id": actor.id,
         "owner_tag": str(actor),
@@ -5757,6 +6420,83 @@ async def add_event_core(guild, guild_state, cs, cid, *, actor, member, date, ti
     )
     nudge = tier_name == "Free" and len(cs["events"]) >= 1
     return msg, nudge
+
+
+async def add_streak_core(guild, guild_state, cs, cid, *, actor, member, date, name):
+    """Validate the streak limit + start date, append a count-UP streak to the channel
+    bucket, and rebuild that channel's board. Returns (message:str, nudge:bool). Mirrors
+    add_event_core, but for streaks: the date is a PAST start ("when did you start?"),
+    streaks deliberately do NOT get the vote-boost (Free & Voted = 1, Pro = unlimited), and
+    already-passed milestones are pre-seeded so backdating never replays them."""
+    tz = get_guild_timezone(cs)
+    now = datetime.now(tz)
+
+    # LIMIT: streaks per board — Free = 1, Voted = 1 (NO vote-boost), Pro = unlimited.
+    existing_streaks = [ev for ev in cs.get("events", []) if is_streak_event(ev)]
+    if not is_pro(guild_state) and len(existing_streaks) >= 1:
+        return (
+            "💎 **One streak is free — more is a Chromie Pro perk.**\n\n"
+            "You're already tracking a streak on this board. **Chromie Pro ($2.99/month)** unlocks "
+            "unlimited streaks (perfect for communities counting each member's milestones) plus "
+            "custom milestone ladders.\n\n"
+            "Subscribe via **Discord Server Subscription**, or delete your current streak from `/event` first.",
+            False,
+        )
+
+    # PARSE the start date (date only — a streak counts up from a day, not a minute).
+    try:
+        dt = datetime.strptime(date, "%m/%d/%Y").replace(tzinfo=tz)
+    except ValueError:
+        return ("I couldn't understand that date.\nUse: `date: 04/12/2026` (MM/DD/YYYY).", False)
+
+    # A streak counts UP from when you started, so the date must be today or earlier.
+    if dt.date() > now.date():
+        return ("That start date is in the **future**. A streak counts up from when you *started* — pick today or a past date.", False)
+
+    days_since = (now.date() - dt.date()).days
+
+    # Pre-seed every milestone already passed so a backdated streak doesn't replay them
+    # ("I quit 90 days ago" should celebrate forward from 100 — not spam 1/7/30/60 at once).
+    ladder = cs.get("default_streak_milestones") or DEFAULT_STREAK_MILESTONES
+    if not isinstance(ladder, list):
+        ladder = DEFAULT_STREAK_MILESTONES
+    ladder = [int(m) for m in ladder if isinstance(m, int)]
+    seeded = streak_milestones_due(days_since, ladder, [])
+
+    creator_display = getattr(member, "display_name", None) or actor.name
+    streak = {
+        "name": name,
+        "type": "streak",
+        "timestamp": int(dt.timestamp()),  # the START moment; the board counts up from here
+        "owner_id": actor.id,
+        "owner_tag": str(actor),
+        "milestones": list(ladder),
+        "announced_milestones": seeded,
+        "milestone_messages": [],
+        "milestones_cleaned": False,
+        "silenced": False,
+        "dm_opt_in": False,
+        "created_by_user_id": int(actor.id),
+        "created_by_name": creator_display,
+        "owner_user_id": int(actor.id),
+        "owner_name": creator_display,
+        "banner_url": None,
+        "start_announced": True,  # streaks have no "zero hour" blast; milestone 1 is the kickoff
+    }
+    cs["events"].append(streak)
+    sort_events(cs)
+    save_state()
+
+    channel = await get_text_channel(cid)
+    if channel is not None:
+        await rebuild_pinned_message_for_channel(channel, cs, guild_state)
+
+    day_word = "day" if days_since == 1 else "days"
+    msg = (
+        f"✅ Streak **{name}** is live — **{days_since} {day_word}** and counting. 🎉\n"
+        f"I'll celebrate each milestone right here on the board."
+    )
+    return msg, False
 
 
 @bot.tree.command(name="addevent", description="Add a new event to the countdown.")
@@ -6201,11 +6941,12 @@ async def healthcheck(interaction: discord.Interaction):
     g = get_guild_state(guild.id)
 
     n_channels = count_countdown_channels(g)
+    n_streak = count_streak_channels(g)
     lines = ["**ChronoBot Healthcheck**", f"Server: **{guild.name}**",
-             f"Countdown channels: **{n_channels}** • Pro: {'✅' if is_pro(g) else '❌'}"]
+             f"Countdown channels: **{n_channels}** • Streak channels: **{n_streak}** • Pro: {'✅' if is_pro(g) else '❌'}"]
 
-    if n_channels == 0:
-        lines.append("\nNo countdown channels yet. Run `/seteventchannel` in a channel to start.")
+    if n_channels == 0 and n_streak == 0:
+        lines.append("\nNothing set up yet. Run `/seteventchannel` (countdowns) or `/setstreakchannel` (streaks) in a channel to start.")
         await interaction.response.send_message("\n".join(lines), ephemeral=True)
         return
 
