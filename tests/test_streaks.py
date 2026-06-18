@@ -493,6 +493,109 @@ def test_streak_reset_message_is_supportive_and_named():
     assert "Smoke-free" in msg and "Day 0" in msg
 
 
+# ---------------------------------------------------------------------------
+# Streak templates (curated catalog, Pro-gated except the free "sober")
+# ---------------------------------------------------------------------------
+
+def test_streak_catalog_structure_and_free_split():
+    cat = chromie.STREAK_TEMPLATES
+    assert len(cat) >= 12
+    free = [k for k, v in cat.items() if not v["pro"]]
+    assert free == ["sober"]  # exactly Sober is gifted to Free; the rest are Pro
+    for tid, t in cat.items():
+        for key in ("label", "emoji", "category", "default_name", "blurb", "milestones", "copy"):
+            assert t.get(key) not in (None, ""), (tid, key)
+        ml = t["milestones"]
+        assert ml == sorted(set(ml)) and all(isinstance(m, int) and m > 0 for m in ml), tid
+        for day, line in t["copy"].items():
+            assert isinstance(day, int)
+            assert "{name}" in line          # every line is personalized
+            line.format(name="X")            # and has no stray braces
+
+
+def test_streak_template_locked_rules():
+    free_guild = chromie.get_guild_state(fresh_gid())
+    pro_guild = chromie.get_guild_state(fresh_gid())
+    pro_guild["pro"] = {"discord_subscription": True}
+    assert chromie.streak_template_locked("sober", free_guild) is False   # gifted to Free
+    assert chromie.streak_template_locked("gym", free_guild) is True       # Pro on a Free guild
+    assert chromie.streak_template_locked("gym", pro_guild) is False       # unlocked on Pro
+    assert chromie.streak_template_locked("nope", free_guild) is False     # unknown id never locks
+
+
+def test_milestone_message_uses_template_copy_then_falls_back():
+    # marquee day -> bespoke template line
+    msg = chromie.build_streak_milestone_message(event_name="Q", days=1, milestone=1, template_id="sober")
+    assert "Day 1" in msg and "Q" in msg
+    # a day NOT in the template copy -> generic fallback still celebrates (and names the streak)
+    fb = chromie.build_streak_milestone_message(event_name="Q", days=60, milestone=60, template_id="sober")
+    assert "Q" in fb and "60" in fb
+    # no template -> original generic behavior, unchanged
+    gen = chromie.build_streak_milestone_message(event_name="Q", days=7, milestone=7)
+    assert "Q" in gen and "7" in gen
+
+
+def _add_streak_tmpl(gid, cid, *, date, template, name=None, pro=False):
+    g = chromie.get_guild_state(gid)
+    if pro:
+        g["pro"] = {"discord_subscription": True}
+    cs = chromie.get_channel_state(gid, cid)
+    cs["kind"] = "streak"
+    res = asyncio.run(chromie.add_streak_core(
+        _FakeGuild(), g, cs, cid,
+        actor=_FakeUser(), member=_FakeMember(), date=date, name=name, template=template,
+    ))
+    return res, cs
+
+
+def test_add_streak_free_template_seeds_id_name_and_ladder():
+    gid, cid = fresh_gid(), 1
+    (msg, _), cs = _add_streak_tmpl(gid, cid, date="01/01/2024", template="sober")  # no name given
+    assert "Streak" in msg
+    ev = cs["events"][0]
+    assert ev["template"] == "sober"
+    assert ev["name"] == "Sober"                                          # template's default name
+    assert ev["milestones"] == chromie.STREAK_TEMPLATES["sober"]["milestones"]
+
+
+def test_add_streak_custom_name_overrides_template_default():
+    gid, cid = fresh_gid(), 1
+    (_msg, _), cs = _add_streak_tmpl(gid, cid, date="01/01/2024", template="sober", name="My Journey")
+    assert cs["events"][0]["name"] == "My Journey"
+    assert cs["events"][0]["template"] == "sober"
+
+
+def test_add_streak_pro_template_gated_on_free_guild():
+    gid, cid = fresh_gid(), 1
+    (msg, _), cs = _add_streak_tmpl(gid, cid, date="01/01/2024", template="gym")  # Free guild
+    assert "Pro" in msg
+    assert cs["events"] == []                                              # nothing created
+
+
+def test_add_streak_pro_template_works_on_pro_guild():
+    gid, cid = fresh_gid(), 1
+    (msg, _), cs = _add_streak_tmpl(gid, cid, date="01/01/2024", template="gym", pro=True)
+    assert "Streak" in msg
+    assert cs["events"][0]["template"] == "gym"
+    assert cs["events"][0]["milestones"] == chromie.STREAK_TEMPLATES["gym"]["milestones"]
+
+
+def test_add_streak_unknown_template_rejected():
+    gid, cid = fresh_gid(), 1
+    (msg, _), cs = _add_streak_tmpl(gid, cid, date="01/01/2024", template="bogus", name="X")
+    assert "template" in msg.lower()
+    assert cs["events"] == []
+
+
+def test_plain_addstreak_still_works_without_template():
+    # Regression: the template param is optional; the original name-only path is unchanged.
+    gid, cid = fresh_gid(), 1
+    (msg, _), cs = _add_streak_tmpl(gid, cid, date="01/01/2024", template=None, name="Custom thing")
+    assert "Streak" in msg
+    assert cs["events"][0]["name"] == "Custom thing"
+    assert cs["events"][0]["template"] is None
+
+
 if __name__ == "__main__":
     failures = 0
     for _name, _fn in sorted(globals().items()):

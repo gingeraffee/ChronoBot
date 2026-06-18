@@ -24,7 +24,7 @@ from discord.errors import NotFound as DiscordNotFound, Forbidden as DiscordForb
 # CONFIG
 # ==========================
 
-VERSION = "2026-06-18"
+VERSION = "2026-06-18 (streak templates)"
 
 DEFAULT_TZ = ZoneInfo("America/Chicago")
 UPDATE_INTERVAL_SECONDS = 60
@@ -1908,7 +1908,8 @@ HELP_PAGES = {
         "desc": "Track \"days since\" milestones — sober, smoke-free, injury-free, days-since-incident. Streaks count UP from a start date, never expire, and celebrate every milestone.",
         "lines": [
             "`/setstreakchannel` — turn a channel into a streak board",
-            "`/addstreak` — start a streak (pick the day you began)",
+            "`/addstreak` — start a streak (pick the day you began; optional `template:`)",
+            "`/streaktemplates` — 💎 browse curated templates (🌅 Sober is free!)",
             "`/resetstreak` — reset to Day 0 after a slip (posts a supportive note)",
             "`/removestreak` — delete a streak from the board for good",
             "`/setstreakmilestones` — 💎 custom milestone days (Pro)",
@@ -3863,6 +3864,241 @@ async def _run_countdown_cycle(guild_id, guild_state, channel, bot_member, serve
             flush_if_dirty()
 
 
+# ==========================
+# STREAK TEMPLATES (curated starter catalog)
+# ==========================
+# Each template bundles a tuned milestone ladder + bespoke marquee copy so a streak
+# feels purpose-built. `pro` gates it behind Chromie Pro EXCEPT "sober", gifted to Free
+# as a recovery goodwill gesture. Copy keys are day-counts; missing days fall back to the
+# generic build_streak_milestone_message line, so every milestone still celebrates.
+# Defined in grouped order (dicts keep insertion order) so pickers list by category.
+STREAK_TEMPLATES = {
+    # ---- Recovery & sobriety ----
+    "sober": {
+        "label": "Sober", "emoji": "🌅", "category": "Recovery & sobriety",
+        "default_name": "Sober", "pro": False,  # gifted to Free
+        "blurb": "Sobriety milestones, day by day",
+        "milestones": [1, 7, 30, 60, 90, 180, 270, 365],
+        "copy": {
+            1:   "🌅 **{name}** — **Day 1.** The hardest and most important day, and you showed up for it. 💛",
+            3:   "💪 **{name}** — **72 hours.** The toughest stretch is behind you. Keep going.",
+            30:  "🪙 **{name}** — **30 days.** Your first chip. One day at a time really does work. 🎉",
+            90:  "🏅 **{name}** — **90 days.** A full season sober. That's enormous.",
+            365: "🎂 **{name}** — **ONE YEAR sober.** 365 days of choosing you. Celebrate this. ✨",
+        },
+    },
+    "smoke_free": {
+        "label": "Smoke-Free", "emoji": "🚭", "category": "Recovery & sobriety",
+        "default_name": "Smoke-Free", "pro": True,
+        "blurb": "Quit smoking — health-timeline cheers",
+        "milestones": [1, 3, 7, 14, 30, 90, 180, 365],
+        "copy": {
+            1:   "🚭 **{name}** — **Day 1 smoke-free.** Your body started healing within the hour. 💛",
+            3:   "🫁 **{name}** — **72 hours.** Nicotine's out of your system and breathing's already easier.",
+            30:  "🌟 **{name}** — **30 days smoke-free.** Lung function is climbing. Incredible.",
+            365: "🎂 **{name}** — **ONE YEAR smoke-free!** Heart-disease risk already cut in half. 🏅",
+        },
+    },
+    "vape_free": {
+        "label": "Vape-Free", "emoji": "💨", "category": "Recovery & sobriety",
+        "default_name": "Vape-Free", "pro": True,
+        "blurb": "Quit vaping",
+        "milestones": [1, 3, 7, 14, 30, 90, 180, 365],
+        "copy": {
+            1:   "💨 **{name}** — **Day 1 vape-free.** First step taken. You've got this. 💪",
+            7:   "🔥 **{name}** — **one week vape-free.** Cravings fade a little more each day.",
+            30:  "🌟 **{name}** — **30 days vape-free.** A whole month of clearer lungs. 🎉",
+            365: "🎂 **{name}** — **ONE YEAR vape-free!** Phenomenal. 🏅",
+        },
+    },
+    "recovery": {
+        "label": "Clean / In Recovery", "emoji": "🌱", "category": "Recovery & sobriety",
+        "default_name": "In Recovery", "pro": True,
+        "blurb": "Substance recovery, gentle tone",
+        "milestones": [1, 7, 30, 90, 180, 365],
+        "copy": {
+            1:   "🌱 **{name}** — **Day 1.** Recovery starts with a single day, and this is it. 💛",
+            30:  "🌿 **{name}** — **30 days.** Thirty days of showing up for yourself.",
+            90:  "🌳 **{name}** — **90 days clean.** A milestone the recovery world holds sacred. 🏅",
+            365: "🎂 **{name}** — **ONE YEAR.** 365 days of recovery. So proud of you. ✨",
+        },
+    },
+    # ---- Health & fitness ----
+    "gym": {
+        "label": "Gym Streak", "emoji": "💪", "category": "Health & fitness",
+        "default_name": "Gym Streak", "pro": True,
+        "blurb": "Workout habit, science-backed days",
+        "milestones": [1, 7, 21, 30, 66, 90, 180, 365],
+        "copy": {
+            1:   "💪 **{name}** — **Day 1.** Everyone starts at rep one. Let's build.",
+            21:  "🔥 **{name}** — **21 days.** They say that's how long a habit takes to take root.",
+            66:  "🧠 **{name}** — **66 days!** Research says that's when a habit goes automatic. You live this now.",
+            365: "🏆 **{name}** — **365 days!** A full year of showing up. Absolute beast.",
+        },
+    },
+    "sugar_free": {
+        "label": "Sugar-Free", "emoji": "🥗", "category": "Health & fitness",
+        "default_name": "Sugar-Free", "pro": True,
+        "blurb": "Cut added sugar",
+        "milestones": [1, 7, 14, 30, 60, 90, 180, 365],
+        "copy": {
+            1:   "🥗 **{name}** — **Day 1 sugar-free.** Your taste buds are about to thank you.",
+            7:   "🔥 **{name}** — **one week!** The cravings are already getting quieter.",
+            30:  "🌟 **{name}** — **30 days sugar-free.** A whole month. Energy's leveling out. 🎉",
+            365: "🎂 **{name}** — **ONE YEAR sugar-free!** Remarkable discipline. 🏅",
+        },
+    },
+    "dry_challenge": {
+        "label": "Dry Challenge (Dry Jan / Sober Oct)", "emoji": "🚱", "category": "Health & fitness",
+        "default_name": "Dry Challenge", "pro": True,
+        "blurb": "Dry January / Sober October",
+        "milestones": [1, 7, 14, 21, 30],
+        "copy": {
+            1:   "🚱 **{name}** — **Day 1.** The challenge begins! Hydrate and conquer.",
+            7:   "🔥 **{name}** — **one week dry.** Sleep's getting better already, isn't it?",
+            14:  "🌟 **{name}** — **two weeks!** Halfway through a classic dry month.",
+            30:  "🏆 **{name}** — **30 days dry!** Challenge complete — and you might just keep the streak going. 🎉",
+        },
+    },
+    # ---- Mind & focus ----
+    "meditation": {
+        "label": "Daily Meditation", "emoji": "🧘", "category": "Mind & focus",
+        "default_name": "Daily Meditation", "pro": True,
+        "blurb": "Daily mindfulness practice",
+        "milestones": [1, 7, 21, 30, 50, 100, 200, 365],
+        "copy": {
+            1:   "🧘 **{name}** — **Day 1.** One breath at a time. The practice begins.",
+            30:  "🌟 **{name}** — **30 days of practice.** Your mind thanks you.",
+            100: "💯 **{name}** — **100 sits!** Triple digits of calm. 🏆",
+            365: "🎂 **{name}** — **ONE YEAR of daily practice.** Deeply impressive. ✨",
+        },
+    },
+    "screen_free": {
+        "label": "Screen-Free", "emoji": "📵", "category": "Mind & focus",
+        "default_name": "Screen-Free", "pro": True,
+        "blurb": "Less screen time / doomscrolling",
+        "milestones": [1, 7, 30, 90, 180, 365],
+        "copy": {
+            1:   "📵 **{name}** — **Day 1.** Eyes up, world on. Let's go.",
+            7:   "🌿 **{name}** — **one week!** Notice how much quieter your head is?",
+            30:  "🌟 **{name}** — **30 days!** A month of reclaimed time. 🎉",
+            365: "🏆 **{name}** — **ONE YEAR!** You bought back so many hours. 🏅",
+        },
+    },
+    "journaling": {
+        "label": "Daily Journaling", "emoji": "✍️", "category": "Mind & focus",
+        "default_name": "Daily Journaling", "pro": True,
+        "blurb": "Write every day",
+        "milestones": [1, 7, 30, 100, 365],
+        "copy": {
+            1:   "✍️ **{name}** — **Day 1.** First page down. The story starts.",
+            7:   "📖 **{name}** — **one week of pages.** The habit's forming.",
+            100: "💯 **{name}** — **100 entries!** Triple digits of showing up on the page. 🏆",
+            365: "🎂 **{name}** — **365 entries.** A whole year documented. 🏅",
+        },
+    },
+    # ---- Learning & building ----
+    "study": {
+        "label": "Study / Language Streak", "emoji": "📚", "category": "Learning & building",
+        "default_name": "Study Streak", "pro": True,
+        "blurb": "Language/study streak, Duolingo-style",
+        "milestones": [7, 30, 50, 100, 200, 365, 500, 1000],
+        "copy": {
+            7:    "📚 **{name}** — **7-day streak!** Consistency beats cramming, every time.",
+            100:  "💯 **{name}** — **100 days!** Triple-digit streak. You're unstoppable. 🏆",
+            365:  "🎂 **{name}** — **365-day streak!** A full year, no misses. Legendary. ✨",
+            1000: "👑 **{name}** — **1000 days!** Quadruple digits. Hall of fame.",
+        },
+    },
+    "code100": {
+        "label": "#100DaysOfCode", "emoji": "👩‍💻", "category": "Learning & building",
+        "default_name": "100 Days of Code", "pro": True,
+        "blurb": "#100DaysOfCode commit-a-day",
+        "milestones": [1, 7, 30, 50, 100, 200, 365],
+        "copy": {
+            1:   "👩‍💻 **{name}** — **Day 1 of the challenge.** Commit a little every day. Ship it.",
+            50:  "🔥 **{name}** — **Day 50.** Halfway to 100. Your repo's glowing green.",
+            100: "🏆 **{name}** — **100 DAYS OF CODE!** Challenge complete. You're a different dev now. 🎉",
+            365: "👑 **{name}** — **365 days!** A year of daily commits. Phenomenal.",
+        },
+    },
+    # ---- Money ----
+    "no_spend": {
+        "label": "No-Spend", "emoji": "💸", "category": "Money",
+        "default_name": "No-Spend", "pro": True,
+        "blurb": "No-spend / no impulse buys",
+        "milestones": [1, 7, 14, 30, 60, 90, 180, 365],
+        "copy": {
+            1:   "💸 **{name}** — **Day 1.** Wallet closed, goals open.",
+            7:   "🔥 **{name}** — **one week no-spend!** Those small 'no's add up fast.",
+            30:  "🌟 **{name}** — **30 days!** A whole month of intentional spending. 🎉",
+            365: "🏆 **{name}** — **ONE YEAR!** Imagine the savings. 🏅",
+        },
+    },
+    # ---- Community & server ----
+    "days_since_incident": {
+        "label": "Days Since Incident", "emoji": "🚧", "category": "Community & server",
+        "default_name": "Days Since Incident", "pro": True,
+        "blurb": "Community 'days since' meme board",
+        "milestones": [1, 7, 30, 69, 100, 365],
+        "copy": {
+            1:   "🚧 **{name}** — counter reset to **Day 1.** Let's keep it clean this time. 😅",
+            7:   "🟢 **{name}** — **7 days incident-free.** The board is pleased.",
+            30:  "🏅 **{name}** — **30 days!** A full month without an Incident™. Management is impressed.",
+            69:  "😎 **{name}** — **69 days.** Nice. (Genuinely solid work, though.)",
+            100: "💯 **{name}** — **100 days incident-free!** Frame this. 🏆",
+            365: "🎂 **{name}** — **ONE YEAR.** 365 days. A community legend. ✨",
+        },
+    },
+    "no_spoiler": {
+        "label": "No-Spoiler Pact", "emoji": "🤐", "category": "Community & server",
+        "default_name": "Spoiler-Free", "pro": True,
+        "blurb": "Spoiler-free pact for show/game servers",
+        "milestones": [1, 7, 14, 30, 60, 90],
+        "copy": {
+            1:  "🤐 **{name}** — **Day 1.** Lips sealed. The pact begins.",
+            7:  "🟢 **{name}** — **one week, zero spoilers.** The fandom thanks you.",
+            30: "🌟 **{name}** — **30 days spoiler-free!** Heroic restraint. 🎉",
+        },
+    },
+}
+
+
+def get_streak_template(template_id):
+    """Return the catalog entry for `template_id`, or None if unknown/blank."""
+    if not template_id:
+        return None
+    return STREAK_TEMPLATES.get(template_id)
+
+
+def streak_template_locked(template_id, guild_state) -> bool:
+    """True if this template is Pro-only and the guild isn't Pro. Unknown ids => not locked
+    (they're rejected elsewhere). 'sober' is free, so it never locks."""
+    t = get_streak_template(template_id)
+    if t is None:
+        return False
+    return bool(t.get("pro")) and not is_pro(guild_state)
+
+
+async def streak_template_autocomplete(interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
+    """Autocomplete for /addstreak's `template:` — shows '🌅 Sober (alcohol)' with a 🔒 Pro
+    marker on locked entries, in grouped catalog order. Value is the template id."""
+    guild = interaction.guild
+    g = get_guild_state(guild.id) if guild is not None else {}
+    cur = (current or "").strip().lower()
+    choices: List[app_commands.Choice[str]] = []
+    for tid, t in STREAK_TEMPLATES.items():
+        locked = streak_template_locked(tid, g)
+        label = f"{t['emoji']} {t['label']}" + (" · 🔒 Pro" if locked else "")
+        haystack = f"{tid} {t['label']} {t['category']} {t.get('blurb', '')}".lower()
+        if cur and cur not in haystack:
+            continue
+        choices.append(app_commands.Choice(name=label[:100], value=tid))
+        if len(choices) >= 25:
+            break
+    return choices
+
+
 def streak_milestones_due(days_since: int, ladder, announced) -> list:
     """Milestone day-counts that are due now (<= days_since) and not yet announced:
     the configured ladder entries PLUS yearly anniversaries (365, 730, 1095, ...) forever."""
@@ -3880,9 +4116,16 @@ def streak_milestones_due(days_since: int, ladder, announced) -> list:
     return sorted(due)
 
 
-def build_streak_milestone_message(*, event_name: str, days: int, milestone: int) -> str:
-    """Celebratory copy for a streak milestone (`milestone` = the day-count reached)."""
+def build_streak_milestone_message(*, event_name: str, days: int, milestone: int, template_id: str = None) -> str:
+    """Celebratory copy for a streak milestone (`milestone` = the day-count reached). If the
+    streak came from a template with bespoke copy for this exact day, use that; otherwise fall
+    back to the generic ladder copy below so every milestone still celebrates."""
     name = event_name or "your streak"
+    t = get_streak_template(template_id)
+    if t is not None:
+        line = t.get("copy", {}).get(milestone)
+        if line:
+            return line.format(name=name)
     if milestone == 1:
         return f"🎉 **{name}** — **Day 1!** The streak officially begins. You've got this. 💪"
     if milestone == 7:
@@ -3927,7 +4170,8 @@ async def _run_streak_cycle(guild_id, channel_state, channel, bot_member, server
         for milestone in streak_milestones_due(days_since, ladder, announced):
             mention_prefix, allowed_mentions = build_milestone_mention(channel, channel_state)
             body = build_streak_milestone_message(
-                event_name=ev.get("name", "Streak"), days=days_since, milestone=milestone
+                event_name=ev.get("name", "Streak"), days=days_since, milestone=milestone,
+                template_id=ev.get("template"),
             )
             try:
                 m = await channel.send(f"{mention_prefix}{body}", allowed_mentions=allowed_mentions)
@@ -4568,9 +4812,11 @@ async def setstreakchannel(interaction: discord.Interaction):
 @bot.tree.command(name="addstreak", description="Start a count-up streak ('days since') on a streak board.")
 @app_commands.describe(
     date="Start date in MM/DD/YYYY — when the streak began (today or earlier)",
-    name="What you're counting, e.g. 'Smoke-free'",
+    template="Optional: start from a curated template (🔒 = Chromie Pro) — sets milestones + celebrations.",
+    name="What you're counting, e.g. 'Smoke-free' (optional if you pick a template)",
 )
-async def addstreak(interaction: discord.Interaction, date: str, name: str):
+@app_commands.autocomplete(template=streak_template_autocomplete)
+async def addstreak(interaction: discord.Interaction, date: str, template: Optional[str] = None, name: Optional[str] = None):
     await interaction.response.defer(ephemeral=True)
     user = interaction.user
 
@@ -4620,7 +4866,7 @@ async def addstreak(interaction: discord.Interaction, date: str, name: str):
         return
 
     msg, _nudge = await add_streak_core(
-        guild, guild_state, cs, cid, actor=user, member=member, date=date, name=name
+        guild, guild_state, cs, cid, actor=user, member=member, date=date, name=name, template=template
     )
     await interaction.edit_original_response(content=msg)
 
@@ -4958,6 +5204,121 @@ async def setstreakmilestones(interaction: discord.Interaction, milestones: str)
     pretty = ", ".join(str(m) for m in ladder)
     await interaction.edit_original_response(
         content=f"✅ Streak milestones set to **{pretty}** days (yearly anniversaries always celebrate too)."
+    )
+
+
+def build_streak_template_catalog_embed(guild_state) -> discord.Embed:
+    """Browseable catalog of streak templates, grouped by category, with 🔒 on the Pro ones
+    (unless the guild is Pro). Powers the /streaktemplates picker."""
+    pro = is_pro(guild_state)
+    if pro:
+        sub = "✨ You have **Chromie Pro** — the whole catalog is unlocked. Pick one below."
+    else:
+        sub = "🔒 = **Chromie Pro**. **Sober** is free for everyone; Pro ($2.99/mo) unlocks the rest."
+    e = discord.Embed(
+        title="🔥 Streak Templates",
+        description="Start a streak with tuned milestones + custom celebrations.\n" + sub,
+        color=EMBED_COLOR,
+    )
+    cats = {}
+    for tid, t in STREAK_TEMPLATES.items():
+        cats.setdefault(t["category"], []).append(t)
+    for cat, items in cats.items():
+        lines = []
+        for t in items:
+            lock = "" if (pro or not t["pro"]) else " 🔒"
+            ladder = " · ".join(str(m) for m in t["milestones"][:6])
+            if len(t["milestones"]) > 6:
+                ladder += " · …"
+            lines.append(f"{t['emoji']} **{t['label']}**{lock} — {ladder}")
+        e.add_field(name=cat, value="\n".join(lines)[:1024], inline=False)
+    e.set_footer(text="Free includes 1 streak • Pro = unlimited streaks + the full template catalog")
+    return e
+
+
+class StreakTemplateModal(discord.ui.Modal):
+    """Collects the start date (+ optional custom name) after a template is picked, then
+    creates the streak via the shared add_streak_core (which re-checks tier + template gates)."""
+    def __init__(self, gid, cid, tid):
+        t = get_streak_template(tid)
+        super().__init__(title=f"Start: {t['label']}"[:45])
+        self.gid, self.cid, self.tid = gid, cid, tid
+        self.date_input = discord.ui.TextInput(
+            label="Start date (MM/DD/YYYY)",
+            placeholder="When did it begin? e.g. 01/01/2026 (today or earlier)",
+            required=True, max_length=10,
+        )
+        self.name_input = discord.ui.TextInput(
+            label="Name (optional)", default=t["default_name"], required=False, max_length=100,
+        )
+        self.add_item(self.date_input)
+        self.add_item(self.name_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        guild_state = get_guild_state(self.gid)
+        cs = get_channel_state(self.gid, self.cid)
+        msg, _nudge = await add_streak_core(
+            interaction.guild, guild_state, cs, self.cid,
+            actor=interaction.user, member=interaction.user,
+            date=self.date_input.value, name=self.name_input.value, template=self.tid,
+        )
+        await interaction.edit_original_response(content=msg)
+
+
+class StreakTemplateSelect(discord.ui.Select):
+    def __init__(self, gid, cid, guild_state):
+        self.gid, self.cid = gid, cid
+        options = []
+        for tid, t in STREAK_TEMPLATES.items():
+            locked = streak_template_locked(tid, guild_state)
+            desc = (t["blurb"] + (" • Pro 🔒" if locked else ""))[:100]
+            options.append(discord.SelectOption(label=f"{t['emoji']} {t['label']}"[:100], value=tid, description=desc))
+        super().__init__(placeholder="Pick a streak template…", min_values=1, max_values=1, options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        tid = self.values[0]
+        g = get_guild_state(self.gid)
+        t = get_streak_template(tid)
+        if t is None:
+            await interaction.response.send_message("That template isn't available anymore.", ephemeral=True)
+            return
+        if streak_template_locked(tid, g):
+            await send_pro_gate(
+                interaction,
+                content=(f"💎 **{t['emoji']} {t['label']}** is a **Chromie Pro** template.\n\n"
+                         "Pro ($2.99/mo) unlocks the whole curated catalog — tuned milestones + custom "
+                         "celebrations. **Sober** is free for everyone. Subscribe via **Discord Server Subscription**."),
+            )
+            return
+        await interaction.response.send_modal(StreakTemplateModal(self.gid, self.cid, tid))
+
+
+class StreakTemplateView(discord.ui.View):
+    def __init__(self, gid, cid, guild_state):
+        super().__init__(timeout=300)
+        self.add_item(StreakTemplateSelect(gid, cid, guild_state))
+
+
+@bot.tree.command(name="streaktemplates", description="Browse Chromie's streak templates and start one (Pro catalog).")
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.checks.has_permissions(manage_guild=True)
+@app_commands.guild_only()
+async def streaktemplates(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    guild = interaction.guild
+    assert guild is not None
+    g = get_guild_state(guild.id)
+    cid, cs = resolve_streak_channel(g, interaction.channel_id)
+    if cs is None:
+        await interaction.edit_original_response(
+            content=("No streak board here. Run `/setstreakchannel` in the channel where you want streaks pinned, "
+                     "then `/streaktemplates` to start one from the catalog.")
+        )
+        return
+    await interaction.edit_original_response(
+        embed=build_streak_template_catalog_embed(g),
+        view=StreakTemplateView(guild.id, cid, g),
     )
 
 
@@ -6564,7 +6925,7 @@ async def add_event_core(guild, guild_state, cs, cid, *, actor, member, date, ti
     return msg, nudge
 
 
-async def add_streak_core(guild, guild_state, cs, cid, *, actor, member, date, name):
+async def add_streak_core(guild, guild_state, cs, cid, *, actor, member, date, name, template=None):
     """Validate the streak limit + start date, append a count-UP streak to the channel
     bucket, and rebuild that channel's board. Returns (message:str, nudge:bool). Mirrors
     add_event_core, but for streaks: the date is a PAST start ("when did you start?"),
@@ -6581,9 +6942,27 @@ async def add_streak_core(guild, guild_state, cs, cid, *, actor, member, date, n
             "You're already tracking a streak on this board. **Chromie Pro ($2.99/month)** unlocks "
             "unlimited streaks (perfect for communities counting each member's milestones) plus "
             "custom milestone ladders.\n\n"
-            "Subscribe via **Discord Server Subscription**, or delete your current streak from `/event` first.",
+            "Subscribe via **Discord Server Subscription**, or remove your current streak with `/removestreak` first.",
             False,
         )
+
+    # TEMPLATE: resolve + gate. The curated catalog is Pro (except "sober", gifted to Free).
+    tmpl = get_streak_template(template)
+    if template and tmpl is None:
+        return ("I don't recognize that streak template — pick one from the `/addstreak template:` list or `/streaktemplates`.", False)
+    if tmpl is not None and streak_template_locked(template, guild_state):
+        return (
+            f"💎 **{tmpl['emoji']} {tmpl['label']} is a Chromie Pro template.**\n\n"
+            "The curated templates (tuned milestones + custom celebrations) come with **Chromie Pro "
+            "($2.99/month)**. You can still start a free streak — just give it a name with `/addstreak name:`.\n\n"
+            "Subscribe via **Discord Server Subscription** to unlock the whole catalog.",
+            False,
+        )
+
+    # NAME: a template fills in a sensible default if the user didn't pass one.
+    name = (name or "").strip() or (tmpl["default_name"] if tmpl is not None else "")
+    if not name:
+        return ("Give your streak a name — e.g. `/addstreak date: 01/01/2026 name: Sober`.", False)
 
     # PARSE the start date (date only — a streak counts up from a day, not a minute).
     try:
@@ -6599,9 +6978,12 @@ async def add_streak_core(guild, guild_state, cs, cid, *, actor, member, date, n
 
     # Pre-seed every milestone already passed so a backdated streak doesn't replay them
     # ("I quit 90 days ago" should celebrate forward from 100 — not spam 1/7/30/60 at once).
-    ladder = cs.get("default_streak_milestones") or DEFAULT_STREAK_MILESTONES
-    if not isinstance(ladder, list):
-        ladder = DEFAULT_STREAK_MILESTONES
+    if tmpl is not None:
+        ladder = list(tmpl["milestones"])  # the template's tuned ladder wins
+    else:
+        ladder = cs.get("default_streak_milestones") or DEFAULT_STREAK_MILESTONES
+        if not isinstance(ladder, list):
+            ladder = DEFAULT_STREAK_MILESTONES
     ladder = [int(m) for m in ladder if isinstance(m, int)]
     seeded = streak_milestones_due(days_since, ladder, [])
 
@@ -6624,6 +7006,7 @@ async def add_streak_core(guild, guild_state, cs, cid, *, actor, member, date, n
         "owner_name": creator_display,
         "banner_url": None,
         "start_announced": True,  # streaks have no "zero hour" blast; milestone 1 is the kickoff
+        "template": template if tmpl is not None else None,  # drives bespoke milestone copy
     }
     cs["events"].append(streak)
     sort_events(cs)
