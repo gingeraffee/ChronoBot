@@ -24,7 +24,7 @@ from discord.errors import NotFound as DiscordNotFound, Forbidden as DiscordForb
 # CONFIG
 # ==========================
 
-VERSION = "2026-06-18 (streak templates)"
+VERSION = "2026-06-18 (onboarding + instant sync)"
 
 DEFAULT_TZ = ZoneInfo("America/Chicago")
 UPDATE_INTERVAL_SECONDS = 60
@@ -1613,6 +1613,8 @@ async def send_onboarding_for_guild(guild: discord.Guild):
         except Exception:
             pass
 
+    # Record onboarding outcome for churn diagnostics (read back on guild leave).
+    guild_state["onboarding"] = {"dm_sent": sent_dm, "could_post": setup_channel is not None}
     guild_state["welcomed"] = True
     save_state()
 
@@ -1809,7 +1811,20 @@ async def on_guild_join(guild: discord.Guild):
     )
     g_state = get_guild_state(guild.id)
     sort_events(g_state)
+    g_state["joined_at"] = time.time()  # for churn diagnostics when a server later leaves
     save_state()
+
+    # Make slash commands appear INSTANTLY in this guild instead of waiting on global
+    # propagation (which can take ~1h and reads as "the bot has no commands" — a prime
+    # cause of add-then-remove churn). Only affects newly-joined guilds; the existing
+    # servers are untouched. Guild-scoped copies shadow the global ones, so no duplicates.
+    try:
+        bot.tree.copy_global_to(guild=guild)
+        synced = await bot.tree.sync(guild=guild)
+        print(f"on_guild_join: instantly synced {len(synced)} commands to guild {guild.id}")
+    except Exception as e:
+        print(f"on_guild_join: guild command sync failed for {guild.id}: {e}")
+
     await send_onboarding_for_guild(guild)
     
     # Post updated server count to Top.gg
@@ -1829,12 +1844,38 @@ async def on_guild_join(guild: discord.Guild):
             print(f"⚠️ Error updating Top.gg on guild join: {e}")
 
 
+def _format_guild_tenure(joined_at, now=None) -> str:
+    """Human 'time in server' from a stored epoch join time, for churn diagnostics.
+    Returns 'unknown' if we never recorded a join (servers from before this shipped)."""
+    if not joined_at:
+        return "unknown"
+    now = time.time() if now is None else now
+    secs = max(0.0, now - float(joined_at))
+    if secs < 90:
+        return f"{int(secs)}s"
+    if secs < 5400:
+        return f"{int(secs // 60)}m"
+    if secs < 172800:
+        return f"{int(secs // 3600)}h"
+    return f"{int(secs // 86400)}d"
+
+
 @bot.event
 async def on_guild_remove(guild: discord.Guild):
     """Called when the bot leaves a guild (kicked, left, or guild deleted)"""
+    g = get_guild_state(guild.id)
+    tenure = _format_guild_tenure(g.get("joined_at"))
+    activated = (count_countdown_channels(g) + count_streak_channels(g)) > 0
+    ob = g.get("onboarding", {}) or {}
     await post_guild_log(
-        f"➖ **Left** {guild.name} (`{guild.id}`) — now in **{len(bot.guilds)}** servers."
+        f"➖ **Left** {guild.name} (`{guild.id}`) after **{tenure}** — "
+        f"activated={activated} · dm_sent={ob.get('dm_sent')} · could_post={ob.get('could_post')} "
+        f"— now in **{len(bot.guilds)}** servers."
     )
+    # Let a returning server get a fresh welcome + setup button if they re-add later.
+    # Their countdowns/streaks/config are preserved — only the welcome flag resets.
+    g["welcomed"] = False
+    save_state()
     # Post updated server count to Top.gg
     bot_id = get_topgg_bot_id()
     if TOPGG_TOKEN and bot_id:
