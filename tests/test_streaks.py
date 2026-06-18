@@ -437,6 +437,57 @@ def test_ordered_streaks_longest_first_and_excludes_countdowns():
     assert [e["name"] for e in ordered] == ["older", "newer"]  # smallest ts (longest) first; countdown dropped
 
 
+def test_remove_streak_event_drops_target_and_keeps_others():
+    gid, cid = fresh_gid(), 1
+    cs = chromie.get_channel_state(gid, cid)
+    cs["kind"] = "streak"
+    cs["events"] = [
+        {"name": "newer", "type": "streak", "timestamp": 2000},
+        {"name": "older", "type": "streak", "timestamp": 1000},
+        {"name": "a countdown", "type": "countdown", "timestamp": 1500},
+    ]
+    target = chromie._ordered_streaks(cs)[0]  # board #1 (longest-running) == "older"
+    assert target["name"] == "older"
+    assert chromie.remove_streak_event(cs, target) is True
+    names = [e["name"] for e in cs["events"]]
+    assert "older" not in names
+    assert "newer" in names and "a countdown" in names  # the other streak + the countdown survive
+
+
+def test_remove_streak_event_returns_false_when_not_present():
+    gid, cid = fresh_gid(), 1
+    cs = chromie.get_channel_state(gid, cid)
+    cs["kind"] = "streak"
+    cs["events"] = [{"name": "only", "type": "streak", "timestamp": 1000}]
+    stranger = {"name": "only", "type": "streak", "timestamp": 1000}  # value-equal, not in the list
+    assert chromie.remove_streak_event(cs, stranger) is False  # identity miss -> nothing removed
+    assert len(cs["events"]) == 1
+
+
+def test_remove_streak_event_is_identity_safe_with_duplicates():
+    # Two streaks identical by value: a naive cs["events"].remove(target) would delete
+    # the FIRST value-equal match (the wrong one). The is-filter drops the picked object.
+    gid, cid = fresh_gid(), 1
+    cs = chromie.get_channel_state(gid, cid)
+    cs["kind"] = "streak"
+    a = {"name": "dup", "type": "streak", "timestamp": 1000}
+    b = {"name": "dup", "type": "streak", "timestamp": 1000}
+    cs["events"] = [a, b]
+    assert chromie.remove_streak_event(cs, b) is True
+    assert cs["events"] == [a] and cs["events"][0] is a
+
+
+def test_build_streak_removed_message_names_streak_and_pluralizes_days():
+    msg = chromie.build_streak_removed_message("Smoke-free", 42)
+    assert "Smoke-free" in msg and "42 days" in msg
+    one = chromie.build_streak_removed_message("Sober", 1)
+    assert "1 day" in one and "1 days" not in one  # singular at one day
+
+
+def test_build_event_removed_message_names_event():
+    assert "Launch" in chromie.build_event_removed_message("Launch")
+
+
 def test_streak_reset_message_is_supportive_and_named():
     msg = chromie.build_streak_reset_message("Smoke-free")
     assert "Smoke-free" in msg and "Day 0" in msg

@@ -24,7 +24,7 @@ from discord.errors import NotFound as DiscordNotFound, Forbidden as DiscordForb
 # CONFIG
 # ==========================
 
-VERSION = "2026-01-11"
+VERSION = "2026-06-18"
 
 DEFAULT_TZ = ZoneInfo("America/Chicago")
 UPDATE_INTERVAL_SECONDS = 60
@@ -1910,6 +1910,7 @@ HELP_PAGES = {
             "`/setstreakchannel` — turn a channel into a streak board",
             "`/addstreak` — start a streak (pick the day you began)",
             "`/resetstreak` — reset to Day 0 after a slip (posts a supportive note)",
+            "`/removestreak` — delete a streak from the board for good",
             "`/setstreakmilestones` — 💎 custom milestone days (Pro)",
             "",
             "Milestones fire at 1 · 7 · 30 · 60 · 90 · 100 · 180 · 365 days — then every anniversary, forever.",
@@ -4517,7 +4518,7 @@ async def seteventchannel(interaction: discord.Interaction):
 
 
 def resolve_streak_channel(guild_state: dict, channel_id):
-    """Pick which streak channel an /addstreak or /resetstreak acts on. Returns
+    """Pick which streak channel an /addstreak, /resetstreak or /removestreak acts on. Returns
     (cid:int|None, cs|None): the current channel if it's a streak channel, else the
     sole streak channel if there's exactly one, else (None, None) for guidance."""
     channels = guild_state.get("channels", {})
@@ -4633,7 +4634,7 @@ def _ordered_streaks(cs: dict) -> list:
 
 
 async def streak_index_autocomplete(interaction: discord.Interaction, current: str) -> List[app_commands.Choice[int]]:
-    """Autocomplete for /resetstreak: shows '1. Name (N days)' so you pick a streak from a list."""
+    """Autocomplete for /resetstreak + /removestreak: shows '1. Name (N days)' so you pick a streak from a list."""
     guild = interaction.guild
     if guild is None:
         return []
@@ -4672,6 +4673,17 @@ def build_streak_reset_message(name: str) -> str:
         "💜 **{name}** has been reset to **Day 0**. No shame in a restart — the comeback is part of the story. Let's go again. ✨",
     ]
     return random.choice(templates).format(name=name or "The streak")
+
+
+def build_event_removed_message(name: str) -> str:
+    """Public note posted to the countdown channel when an event is deleted."""
+    return f"🗑️ The event **{(name or 'Untitled').strip()[:200]}** was removed from the countdown."
+
+
+def build_streak_removed_message(name: str, days: int) -> str:
+    """Public note posted to the streak channel when a streak is deleted."""
+    return (f"🗑️ The streak **{(name or 'Untitled').strip()[:200]}** "
+            f"({days} day{'s' if days != 1 else ''}) was removed from the board.")
 
 
 @bot.tree.command(name="resetstreak", description="Reset a streak back to Day 0 (e.g. after a slip) — starts the count over.")
@@ -4742,6 +4754,138 @@ async def resetstreak(interaction: discord.Interaction, index: Optional[int] = N
 
     await interaction.edit_original_response(
         content=f"💜 Reset **{target.get('name')}** to Day 0 — posted a fresh-start note to the channel."
+    )
+
+
+def remove_streak_event(cs: dict, target_ev: dict) -> bool:
+    """Drop exactly `target_ev` from cs["events"], in place, matching by identity (`is`)
+    so duplicate names/dates can never delete the wrong streak. Returns True if it was
+    present and removed, False if it wasn't found (e.g. already deleted)."""
+    before = len(cs.get("events", []))
+    cs["events"] = [ev for ev in cs.get("events", []) if ev is not target_ev]
+    return len(cs["events"]) != before
+
+
+class StreakRemoveCancelButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="Cancel", style=discord.ButtonStyle.secondary, row=0)
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.edit_message(
+            content="Cancelled — the streak is still on the board.", embed=None, view=None
+        )
+
+
+class StreakRemoveConfirmButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="Yes, remove this streak", emoji="🗑️", style=discord.ButtonStyle.danger, row=0)
+
+    async def callback(self, interaction: discord.Interaction):
+        v = self.view
+        guild_state = get_guild_state(v.guild_id)
+        cs = get_channel_state(v.guild_id, v.channel_id)
+        if not remove_streak_event(cs, v.ev):
+            await interaction.response.edit_message(
+                content="That streak was already removed.", embed=None, view=None
+            )
+            return
+        save_state()
+        # Acknowledge within the 3s window before the network-bound channel post + pin refresh.
+        await interaction.response.edit_message(
+            content=(f"🗑️ Removed **{v.name}** ({v.days} day{'s' if v.days != 1 else ''}) — posted a note to the channel. "
+                     f"Want to keep it and just restart the count next time? Use `/resetstreak`."),
+            embed=None, view=None,
+        )
+        channel = await get_text_channel(v.channel_id)
+        if channel is not None:
+            await rebuild_pinned_message_for_channel(channel, cs, guild_state)
+            try:
+                await channel.send(build_streak_removed_message(v.name, v.days))
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+
+
+class StreakRemoveConfirmView(discord.ui.View):
+    def __init__(self, gid, cid, ev, name, days):
+        super().__init__(timeout=120)
+        self.guild_id, self.channel_id, self.ev = gid, cid, ev
+        self.name, self.days = name, days
+        self.add_item(StreakRemoveConfirmButton())
+        self.add_item(StreakRemoveCancelButton())
+
+
+@bot.tree.command(name="removestreak", description="Permanently delete a streak from the board (use /resetstreak to keep it and restart).")
+@app_commands.describe(index="Which streak to remove — pick from the list (only needed if the board has more than one)")
+@app_commands.autocomplete(index=streak_index_autocomplete)
+@app_commands.guild_only()
+async def removestreak(interaction: discord.Interaction, index: Optional[int] = None):
+    await interaction.response.defer(ephemeral=True)
+    guild = interaction.guild
+    if guild is None:
+        await interaction.edit_original_response(content="Run `/removestreak` inside the server's streak channel.")
+        return
+
+    member = interaction.user
+    if not isinstance(member, discord.Member):
+        member = guild.get_member(interaction.user.id) or member
+    perms = getattr(member, "guild_permissions", None)
+    if not perms or not (perms.manage_guild or perms.administrator):
+        await interaction.edit_original_response(
+            content="You need **Manage Server** (or **Administrator**) to remove a streak."
+        )
+        return
+
+    guild_state = get_guild_state(guild.id)
+    cid, cs = resolve_streak_channel(guild_state, interaction.channel_id)
+    if cs is None:
+        await interaction.edit_original_response(
+            content="No streak board here. Run `/removestreak` inside your streak channel."
+        )
+        return
+
+    streaks = _ordered_streaks(cs)
+    if not streaks:
+        await interaction.edit_original_response(content="There are no streaks on this board yet.")
+        return
+
+    if index is None:
+        if len(streaks) == 1:
+            index = 1
+        else:
+            listing = "\n".join(f"**{i}.** {ev.get('name')}" for i, ev in enumerate(streaks, start=1))
+            await interaction.edit_original_response(
+                content=f"This board has multiple streaks — run `/removestreak` again and pick one from the **index** list:\n{listing}"
+            )
+            return
+
+    target = streaks[index - 1] if 1 <= index <= len(streaks) else None
+    if target is None:
+        await interaction.edit_original_response(
+            content="That streak number isn't on this board — open the **index** picker to see the list."
+        )
+        return
+
+    # Day count for the confirmation prompt, measured now (the count won't have moved
+    # by the time they confirm seconds later).
+    tz = get_guild_timezone(cs)
+    now = datetime.now(tz)
+    try:
+        start = datetime.fromtimestamp(float(target["timestamp"]), tz=tz)
+        days = max(0, (now.date() - start.date()).days)
+    except Exception:
+        days = 0
+    name = target.get("name") or "The streak"
+
+    await interaction.edit_original_response(
+        content=None,
+        embed=discord.Embed(
+            title="🗑️ Remove this streak?",
+            description=(f"**{name}** is at **{days} day{'s' if days != 1 else ''}**. "
+                         f"This permanently deletes it from the board and posts a note to the channel.\n\n"
+                         f"Just want to start the count over instead? Use `/resetstreak` — it keeps the streak."),
+            color=discord.Color.red(),
+        ),
+        view=StreakRemoveConfirmView(guild.id, cid, target, name, days),
     )
 
 
@@ -6165,6 +6309,7 @@ class EventDeleteConfirmButton(discord.ui.Button):
         v = self.view
         cs = get_channel_state(v.guild_id, v.channel_id)
         g = get_guild_state(v.guild_id)
+        name = str(v.ev.get("name", "Event"))
         try:
             cs["events"].remove(v.ev)
         except ValueError:
@@ -6175,6 +6320,13 @@ class EventDeleteConfirmButton(discord.ui.Button):
             embed=build_event_hub_embed(cs, g), view=EventHubView(v.guild_id, v.channel_id)
         )
         await _countdown_refresh_pin(v.guild_id, v.channel_id)
+        # Tell the channel the event is gone (best-effort; needs send perms).
+        channel = await get_text_channel(v.channel_id)
+        if channel is not None:
+            try:
+                await channel.send(build_event_removed_message(name))
+            except (discord.Forbidden, discord.HTTPException):
+                pass
 
 
 class EventDeleteView(discord.ui.View):
