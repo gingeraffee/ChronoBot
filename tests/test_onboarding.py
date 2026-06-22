@@ -38,6 +38,18 @@ def test_tenure_clamps_negative_clock_skew():
     assert chromie._format_guild_tenure(1000, now=500) == "0s"
 
 
+def test_mark_stint_activation_stamps_once_then_counts():
+    # First add stamps activated_at + counts; later adds keep the first-add
+    # timestamp (so time-to-activate stays honest) but keep climbing the count.
+    g = {}
+    chromie._mark_stint_activation(g)
+    first = g["activated_at"]
+    assert first and g["events_created"] == 1
+    chromie._mark_stint_activation(g)
+    assert g["activated_at"] == first   # not re-stamped on the 2nd add
+    assert g["events_created"] == 2     # but the count climbs
+
+
 if __name__ == "__main__":
     failures = 0
     for _name, _fn in sorted(globals().items()):

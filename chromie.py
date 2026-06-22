@@ -24,7 +24,7 @@ from discord.errors import NotFound as DiscordNotFound, Forbidden as DiscordForb
 # CONFIG
 # ==========================
 
-VERSION = "2026-06-18 (onboarding + instant sync)"
+VERSION = "2026-06-21 (lean onboarding: channel-only setup button)"
 
 DEFAULT_TZ = ZoneInfo("America/Chicago")
 UPDATE_INTERVAL_SECONDS = 60
@@ -1540,81 +1540,30 @@ async def send_onboarding_for_guild(guild: discord.Guild):
     if guild_state.get("welcomed"):
         return
 
-    contact_user = guild.owner
-    if contact_user is None:
-        try:
-            contact_user = await bot.fetch_user(guild.owner_id)
-        except Exception:
-            contact_user = None
-
-    mention = contact_user.mention if contact_user else ""
     # -----------------------------
-    # Welcome DM — one premium-spaced message using Discord ## headers + -# subtext.
-    # (Full tier/Pro breakdown lives in /chronohelp, so we don't wall-of-text the DM.)
+    # Lean onboarding: ONE short channel message + the guided-setup button.
+    # No owner DM (it surprised owners who didn't add the bot) and no tier wall —
+    # we sell at the moment of friction instead: the event-limit gate, the
+    # post-first-event nudge, and locked-feature prompts all surface Vote/Pro.
+    # Value-first: get them to a working countdown; let the paywall find them later.
     # -----------------------------
-    base_message = (
-        f"Hey {mention} — thanks for adding me to **{guild.name}**! 🕒✨\n"
-        "I pin a tidy countdown and nudge everyone before the big moment, so nobody's stuck doing panic-math.\n\n"
-        "## 🚀 Set up in 20 seconds\n"
-        "Click **Get started** on my setup message in this server — I'll handle the rest.\n"
-        "-# Prefer typing? `/seteventchannel`, then `/addevent`.\n\n"
-        "## 🧭 The essentials\n"
-        "`/event` — add & manage events (edit, milestones, owner, repeat, banner)\n"
-        "`/countdown` — **20 themes**, timezone, time format, role pings, digest\n"
-        "`/listevents` · `/nextevent` · `/healthcheck` · `/chronohelp`\n\n"
-        "## 🔥 Streaks — count *up*\n"
-        "`/setstreakchannel`, then `/addstreak` — track \"days since\" (smoke-free, sober, injury-free…). I cheer every milestone, and a slip just resets to Day 0 — no shame.\n"
-        "-# Free includes 1 streak board · Pro tracks unlimited.\n\n"
-        "## 💎 Tiers\n"
-        "🆓 **Free** — 1 event\n"
-        "⭐ **Supporter** — 3 events, free with `/vote`\n"
-        "💎 **Pro** — unlimited + a board in *every* channel (countdowns **&** streaks) · $2.99/mo\n\n"
-        f"-# Lost the button? `/resendsetup` · FAQ: {FAQ_URL} · Support: {SUPPORT_SERVER_URL}\n"
-        "Now go — I'll be here, politely bullying time into behaving. 💜"
-    )
-
-    sent_dm = False
-
-    # Try DM first (preferred)
-    if contact_user:
-        try:
-            await contact_user.send(base_message)
-            sent_dm = True
-        except discord.Forbidden:
-            sent_dm = False
-        except Exception:
-            sent_dm = False
-
-    # Fallback: post in a channel (base message only to avoid "promo spam" vibe)
-    if not sent_dm:
-        fallback_channel = await _first_sendable_channel(guild)
-        if fallback_channel is not None:
-            try:
-                await fallback_channel.send(
-                    base_message,
-                    allowed_mentions=discord.AllowedMentions.none()
-                )
-            except Exception:
-                pass
-
-    # Always post an in-channel guided-setup button so an admin can configure the
-    # countdown in a couple of clicks — visible even when the owner has DMs off.
     setup_channel = await _first_sendable_channel(guild)
     if setup_channel is not None:
         try:
             await setup_channel.send(
-                "👋 **Let's set up your countdown!**\n"
-                "Click **🚀 Get started** below and I'll walk you through it — pick a channel, "
-                "then add your first event. Takes about 20 seconds.\n"
-                "*(You'll need the **Manage Server** permission.)*",
+                "✨ **Pick a date. I'll handle the rest.** A live countdown, pinned and "
+                "ticking, with a nudge before zero hour.\n"
+                "Hit **🚀 Get started** to set yours up — about 20 seconds.\n"
+                "-# Needs **Manage Server**.",
                 view=GuidedSetupView(),
                 allowed_mentions=discord.AllowedMentions.none(),
             )
         except Exception:
-            pass
+            setup_channel = None  # posting failed → onboarding didn't actually land
 
     # Record onboarding outcome for churn diagnostics (read back on guild leave).
-    guild_state["onboarding"] = {"dm_sent": sent_dm, "could_post": setup_channel is not None}
+    # `could_post` is now the single "did onboarding land?" signal (dm_sent retired).
+    guild_state["onboarding"] = {"could_post": setup_channel is not None}
     guild_state["welcomed"] = True
     save_state()
 
@@ -1812,6 +1761,10 @@ async def on_guild_join(guild: discord.Guild):
     g_state = get_guild_state(guild.id)
     sort_events(g_state)
     g_state["joined_at"] = time.time()  # for churn diagnostics when a server later leaves
+    # Fresh stint → clear per-stint engagement so a re-add doesn't inherit stale
+    # activation from a prior visit (boards/config are intentionally preserved).
+    g_state["activated_at"] = None
+    g_state["events_created"] = 0
     save_state()
 
     # Make slash commands appear INSTANTLY in this guild instead of waiting on global
@@ -1844,6 +1797,24 @@ async def on_guild_join(guild: discord.Guild):
             print(f"⚠️ Error updating Top.gg on guild join: {e}")
 
 
+def _mark_stint_activation(guild_state: dict) -> None:
+    """Per-stint engagement marker for churn diagnostics.
+
+    Countdowns/streaks persist across re-adds (on_guild_remove only resets
+    `welcomed`), so the old `count_channels > 0` 'activated' check reads
+    stale-True when a churned server re-adds and bounces in minutes. This stamps
+    the FIRST event/streak created in the CURRENT stint (cleared on join) and
+    counts how many — so the leave log reflects real engagement this visit, not
+    leftover config. Called from add_event_core + add_streak_core, which every
+    add path funnels through (guided button, /event hub, /addevent, /addstreak).
+
+    NOTE: must be module-level — add_event_core has a `time` str param that
+    shadows the `time` module, so `time.time()` only works out here."""
+    if not guild_state.get("activated_at"):
+        guild_state["activated_at"] = time.time()
+    guild_state["events_created"] = guild_state.get("events_created", 0) + 1
+
+
 def _format_guild_tenure(joined_at, now=None) -> str:
     """Human 'time in server' from a stored epoch join time, for churn diagnostics.
     Returns 'unknown' if we never recorded a join (servers from before this shipped)."""
@@ -1864,12 +1835,22 @@ def _format_guild_tenure(joined_at, now=None) -> str:
 async def on_guild_remove(guild: discord.Guild):
     """Called when the bot leaves a guild (kicked, left, or guild deleted)"""
     g = get_guild_state(guild.id)
-    tenure = _format_guild_tenure(g.get("joined_at"))
-    activated = (count_countdown_channels(g) + count_streak_channels(g)) > 0
+    joined_at = g.get("joined_at")
+    tenure = _format_guild_tenure(joined_at)
+    # Per-stint activation (trustworthy on re-adds); `configured` is the old
+    # boards-exist signal, kept as a secondary qualifier (can be stale on re-adds).
+    activated_at = g.get("activated_at")
+    configured = (count_countdown_channels(g) + count_streak_channels(g)) > 0
+    n_added = g.get("events_created", 0)
+    if activated_at:
+        ttf = _format_guild_tenure(joined_at, now=activated_at) if joined_at else "?"
+        engagement = f"activated=True ({ttf} to first add, {n_added} added)"
+    else:
+        engagement = f"activated=False (configured={configured})"
     ob = g.get("onboarding", {}) or {}
     await post_guild_log(
         f"➖ **Left** {guild.name} (`{guild.id}`) after **{tenure}** — "
-        f"activated={activated} · dm_sent={ob.get('dm_sent')} · could_post={ob.get('could_post')} "
+        f"{engagement} · could_post={ob.get('could_post')} "
         f"— now in **{len(bot.guilds)}** servers."
     )
     # Let a returning server get a fresh welcome + setup button if they re-add later.
@@ -6952,6 +6933,7 @@ async def add_event_core(guild, guild_state, cs, cid, *, actor, member, date, ti
 
     cs["events"].append(event)
     sort_events(cs)
+    _mark_stint_activation(guild_state)  # per-stint churn diagnostics
     save_state()
 
     channel = await get_text_channel(cid)
@@ -7051,6 +7033,7 @@ async def add_streak_core(guild, guild_state, cs, cid, *, actor, member, date, n
     }
     cs["events"].append(streak)
     sort_events(cs)
+    _mark_stint_activation(guild_state)  # per-stint churn diagnostics
     save_state()
 
     channel = await get_text_channel(cid)
