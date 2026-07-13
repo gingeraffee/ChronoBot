@@ -1761,6 +1761,11 @@ async def on_guild_join(guild: discord.Guild):
     g_state = get_guild_state(guild.id)
     sort_events(g_state)
     g_state["joined_at"] = time.time()  # for churn diagnostics when a server later leaves
+    # Snapshot name + size now: on leave Discord may hand us only a partial guild
+    # object (no cached name/member_count), so the churn log falls back to these.
+    g_state["name"] = guild.name
+    if guild.member_count is not None:
+        g_state["member_count"] = guild.member_count
     # Fresh stint → clear per-stint engagement so a re-add doesn't inherit stale
     # activation from a prior visit (boards/config are intentionally preserved).
     g_state["activated_at"] = None
@@ -1906,13 +1911,18 @@ async def on_guild_remove(guild: discord.Guild):
     # are per-stint (cleared on join) so a re-add that bounces reads honestly.
     tenure = (_plain_duration(time.time() - float(joined_at))
               if joined_at else "an unknown amount of time")
+    # On leave Discord may hand us a partial guild (blank name / member_count=None),
+    # so fall back to the snapshot we stored on join.
+    name = getattr(guild, "name", None) or g.get("name") or "an unknown server"
     members = getattr(guild, "member_count", None)
+    if members is None:
+        members = g.get("member_count")
     size = f"{members:,} members" if members is not None else "an unknown number of members"
     tier = _guild_tier_name(g)
     engagement = _stint_engagement_sentence(g, joined_at)
     onboarding = _onboarding_sentence(g.get("onboarding", {}))
     await post_guild_log(
-        f"➖ **Left {guild.name}** (`{guild.id}`) after **{tenure}**. "
+        f"➖ **Left {name}** (`{guild.id}`) after **{tenure}**. "
         f"The server had {size} and was on the **{tier}** tier. "
         f"{engagement} {onboarding} "
         f"Now in **{len(bot.guilds)}** servers."
