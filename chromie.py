@@ -1765,6 +1765,8 @@ async def on_guild_join(guild: discord.Guild):
     # activation from a prior visit (boards/config are intentionally preserved).
     g_state["activated_at"] = None
     g_state["events_created"] = 0
+    g_state["countdowns_created_stint"] = 0
+    g_state["streaks_created_stint"] = 0
     save_state()
 
     # Make slash commands appear INSTANTLY in this guild instead of waiting on global
@@ -1797,22 +1799,25 @@ async def on_guild_join(guild: discord.Guild):
             print(f"⚠️ Error updating Top.gg on guild join: {e}")
 
 
-def _mark_stint_activation(guild_state: dict) -> None:
+def _mark_stint_activation(guild_state: dict, kind: str = "countdown") -> None:
     """Per-stint engagement marker for churn diagnostics.
 
     Countdowns/streaks persist across re-adds (on_guild_remove only resets
     `welcomed`), so the old `count_channels > 0` 'activated' check reads
     stale-True when a churned server re-adds and bounces in minutes. This stamps
     the FIRST event/streak created in the CURRENT stint (cleared on join) and
-    counts how many — so the leave log reflects real engagement this visit, not
-    leftover config. Called from add_event_core + add_streak_core, which every
-    add path funnels through (guided button, /event hub, /addevent, /addstreak).
+    counts how many — split by `kind` ("countdown"/"streak") so the leave log can
+    say what they actually built this visit, not leftover config. Called from
+    add_event_core + add_streak_core, which every add path funnels through
+    (guided button, /event hub, /addevent, /addstreak).
 
     NOTE: must be module-level — add_event_core has a `time` str param that
     shadows the `time` module, so `time.time()` only works out here."""
     if not guild_state.get("activated_at"):
         guild_state["activated_at"] = time.time()
     guild_state["events_created"] = guild_state.get("events_created", 0) + 1
+    key = "streaks_created_stint" if kind == "streak" else "countdowns_created_stint"
+    guild_state[key] = guild_state.get(key, 0) + 1
 
 
 def _format_guild_tenure(joined_at, now=None) -> str:
@@ -1831,27 +1836,86 @@ def _format_guild_tenure(joined_at, now=None) -> str:
     return f"{int(secs // 86400)}d"
 
 
+def _plain_duration(secs) -> str:
+    """Spelled-out duration ('33 minutes', '1 hour') for human-readable churn logs."""
+    secs = max(0.0, float(secs))
+    if secs < 90:
+        n, unit = int(secs), "second"
+    elif secs < 5400:
+        n, unit = int(secs // 60), "minute"
+    elif secs < 172800:
+        n, unit = int(secs // 3600), "hour"
+    else:
+        n, unit = int(secs // 86400), "day"
+    return f"{n} {unit}{'' if n == 1 else 's'}"
+
+
+def _guild_tier_name(guild_state: dict) -> str:
+    """Plain tier label for churn logs: Pro > Supporter (active vote) > Free."""
+    if is_pro(guild_state):
+        return "Pro"
+    if has_active_vote_guild(guild_state):
+        return "Supporter"
+    return "Free"
+
+
+def _stint_engagement_sentence(guild_state: dict, joined_at) -> str:
+    """One plain-English sentence on what they built (or didn't) during THIS visit."""
+    if not guild_state.get("activated_at"):
+        # Nothing this stint. Note leftover boards from a prior visit so a re-add
+        # that bounced doesn't read as a never-configured server.
+        configured = (count_countdown_channels(guild_state)
+                      + count_streak_channels(guild_state)) > 0
+        if configured:
+            return "They didn't create anything this visit (boards from a previous visit were still set up)."
+        return "They never created a countdown or streak."
+    # Activated → describe the mix and how quickly they got there.
+    n_cd = guild_state.get("countdowns_created_stint", 0)
+    n_st = guild_state.get("streaks_created_stint", 0)
+    parts = []
+    if n_cd:
+        parts.append(f"{n_cd} countdown{'' if n_cd == 1 else 's'}")
+    if n_st:
+        parts.append(f"{n_st} streak{'' if n_st == 1 else 's'}")
+    if not parts:  # activated but pre-split counters (older state) → fall back to total
+        total = guild_state.get("events_created", 0)
+        parts.append(f"{total} countdown/streak{'' if total == 1 else 's'}")
+    what = " and ".join(parts)
+    when = (_plain_duration(guild_state["activated_at"] - float(joined_at)) + " after joining"
+            if joined_at else "during this visit")
+    return f"They created {what} {when}."
+
+
+def _onboarding_sentence(onboarding: dict) -> str:
+    """Plain-English read on whether the setup prompt actually reached them."""
+    could_post = (onboarding or {}).get("could_post")
+    if could_post is True:
+        return "All permissions were met — they saw the setup prompt."
+    if could_post is False:
+        return "Couldn't post the setup prompt — missing channel permissions, so they never saw it."
+    return "Whether the setup prompt reached them is unknown (they joined before this was tracked)."
+
+
 @bot.event
 async def on_guild_remove(guild: discord.Guild):
     """Called when the bot leaves a guild (kicked, left, or guild deleted)"""
     g = get_guild_state(guild.id)
     joined_at = g.get("joined_at")
-    tenure = _format_guild_tenure(joined_at)
-    # Per-stint activation (trustworthy on re-adds); `configured` is the old
-    # boards-exist signal, kept as a secondary qualifier (can be stale on re-adds).
-    activated_at = g.get("activated_at")
-    configured = (count_countdown_channels(g) + count_streak_channels(g)) > 0
-    n_added = g.get("events_created", 0)
-    if activated_at:
-        ttf = _format_guild_tenure(joined_at, now=activated_at) if joined_at else "?"
-        engagement = f"activated=True ({ttf} to first add, {n_added} added)"
-    else:
-        engagement = f"activated=False (configured={configured})"
-    ob = g.get("onboarding", {}) or {}
+    # Plain-English churn diagnostics — spell out tenure, size, tier, what they
+    # built this stint, and whether onboarding reached them. Underlying signals
+    # are per-stint (cleared on join) so a re-add that bounces reads honestly.
+    tenure = (_plain_duration(time.time() - float(joined_at))
+              if joined_at else "an unknown amount of time")
+    members = getattr(guild, "member_count", None)
+    size = f"{members:,} members" if members is not None else "an unknown number of members"
+    tier = _guild_tier_name(g)
+    engagement = _stint_engagement_sentence(g, joined_at)
+    onboarding = _onboarding_sentence(g.get("onboarding", {}))
     await post_guild_log(
-        f"➖ **Left** {guild.name} (`{guild.id}`) after **{tenure}** — "
-        f"{engagement} · could_post={ob.get('could_post')} "
-        f"— now in **{len(bot.guilds)}** servers."
+        f"➖ **Left {guild.name}** (`{guild.id}`) after **{tenure}**. "
+        f"The server had {size} and was on the **{tier}** tier. "
+        f"{engagement} {onboarding} "
+        f"Now in **{len(bot.guilds)}** servers."
     )
     # Let a returning server get a fresh welcome + setup button if they re-add later.
     # Their countdowns/streaks/config are preserved — only the welcome flag resets.
@@ -7033,7 +7097,7 @@ async def add_streak_core(guild, guild_state, cs, cid, *, actor, member, date, n
     }
     cs["events"].append(streak)
     sort_events(cs)
-    _mark_stint_activation(guild_state)  # per-stint churn diagnostics
+    _mark_stint_activation(guild_state, kind="streak")  # per-stint churn diagnostics
     save_state()
 
     channel = await get_text_channel(cid)
